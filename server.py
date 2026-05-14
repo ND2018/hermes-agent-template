@@ -1115,10 +1115,7 @@ ANY_METHOD = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 # GET  /mcp  → SSE transport (mcp-remote sse-only fallback).
 # POST /mcp/messages → message channel for SSE sessions.
 # Auth: Authorization: Bearer <MCP_API_KEY>  (set in Railway env vars).
-# Tool: hermes_chat(message) → forwards to Hermes OpenAI API on port 8642.
-
-HERMES_API_PORT = int(os.environ.get("HERMES_API_PORT", "8642"))
-HERMES_API_URL  = f"http://127.0.0.1:{HERMES_API_PORT}"
+# Tool: hermes_chat(message) → runs `hermes -z <message>` (oneshot CLI mode).
 
 _MCP_SERVER_INFO      = {"name": "hermes-agent", "version": "1.0.0"}
 _MCP_PROTOCOL_VERSION = "2024-11-05"
@@ -1155,18 +1152,24 @@ def _mcp_auth_ok(request: Request) -> bool:
 
 async def _call_hermes(message: str) -> str:
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            r = await client.post(
-                f"{HERMES_API_URL}/v1/chat/completions",
-                json={
-                    "model": "hermes-agent",
-                    "messages": [{"role": "user", "content": message}],
-                    "stream": False,
-                },
-            )
-            r.raise_for_status()
-            data = r.json()
-            return data["choices"][0]["message"]["content"]
+        env = {**os.environ, "HERMES_HOME": HERMES_HOME, "HERMES_YOLO_MODE": "1"}
+        proc = await asyncio.create_subprocess_exec(
+            "hermes", "-z", message,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return "[hermes-agent error] Request timed out after 120s"
+        if proc.returncode != 0:
+            err = stderr.decode("utf-8", errors="replace").strip()
+            return f"[hermes-agent error] hermes -z exit {proc.returncode}: {err[:500]}"
+        result = stdout.decode("utf-8", errors="replace").strip()
+        return result or "[hermes-agent error] Empty response from hermes -z"
     except Exception as exc:
         return f"[hermes-agent error] {exc}"
 
