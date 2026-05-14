@@ -42,6 +42,7 @@ from starlette.responses import (
     JSONResponse,
     RedirectResponse,
     Response,
+    StreamingResponse,
 )
 from starlette.routing import Route, WebSocketRoute
 from starlette.templating import Jinja2Templates
@@ -1108,6 +1109,180 @@ async def ws_proxy(websocket: WebSocket) -> None:
 
 ANY_METHOD = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 
+
+# ── MCP server (Bearer-token guarded) ────────────────────────────────────────
+# POST /mcp  → Streamable HTTP transport (mcp-remote http-first strategy).
+# GET  /mcp  → SSE transport (mcp-remote sse-only fallback).
+# POST /mcp/messages → message channel for SSE sessions.
+# Auth: Authorization: Bearer <MCP_API_KEY>  (set in Railway env vars).
+# Tool: hermes_chat(message) → forwards to Hermes OpenAI API on port 8642.
+
+HERMES_API_PORT = int(os.environ.get("HERMES_API_PORT", "8642"))
+HERMES_API_URL  = f"http://127.0.0.1:{HERMES_API_PORT}"
+
+_MCP_SERVER_INFO      = {"name": "hermes-agent", "version": "1.0.0"}
+_MCP_PROTOCOL_VERSION = "2024-11-05"
+_MCP_CAPABILITIES     = {"tools": {}}
+_MCP_TOOLS = [
+    {
+        "name": "hermes_chat",
+        "description": (
+            "Send a message or task to the Hermes Agent and get a response. "
+            "Use for complex research, planning, coding, or any task that "
+            "benefits from Hermes autonomous reasoning."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "The message or task to send to Hermes.",
+                }
+            },
+            "required": ["message"],
+        },
+    }
+]
+
+_mcp_sse_sessions: dict = {}  # session_id -> asyncio.Queue
+
+
+def _mcp_auth_ok(request: Request) -> bool:
+    if not MCP_API_KEY:
+        return False
+    return request.headers.get("authorization", "") == f"Bearer {MCP_API_KEY}"
+
+
+async def _call_hermes(message: str) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            r = await client.post(
+                f"{HERMES_API_URL}/v1/chat/completions",
+                json={
+                    "model": "hermes-agent",
+                    "messages": [{"role": "user", "content": message}],
+                    "stream": False,
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+            return data["choices"][0]["message"]["content"]
+    except Exception as exc:
+        return f"[hermes-agent error] {exc}"
+
+
+def _mcp_respond(data: dict, status: int = 200) -> Response:
+    import json as _json
+    return Response(
+        content=_json.dumps(data),
+        status_code=status,
+        media_type="application/json",
+    )
+
+
+async def _mcp_handle_jsonrpc(body: dict):
+    method = body.get("method", "")
+    msg_id = body.get("id")
+    params = body.get("params", {})
+
+    if method == "initialize":
+        return {
+            "jsonrpc": "2.0", "id": msg_id,
+            "result": {
+                "protocolVersion": _MCP_PROTOCOL_VERSION,
+                "serverInfo":      _MCP_SERVER_INFO,
+                "capabilities":    _MCP_CAPABILITIES,
+            },
+        }
+    if method == "tools/list":
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": _MCP_TOOLS}}
+
+    if method == "tools/call":
+        tool_name = params.get("name", "")
+        arguments = params.get("arguments", {})
+        if tool_name == "hermes_chat":
+            text = await _call_hermes(arguments.get("message", ""))
+            return {
+                "jsonrpc": "2.0", "id": msg_id,
+                "result": {"content": [{"type": "text", "text": text}], "isError": False},
+            }
+        return {
+            "jsonrpc": "2.0", "id": msg_id,
+            "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"},
+        }
+
+    if msg_id is not None:
+        return {
+            "jsonrpc": "2.0", "id": msg_id,
+            "error": {"code": -32601, "message": f"Method not found: {method}"},
+        }
+    return None  # Notification
+
+
+async def route_mcp(request: Request) -> Response:
+    if not _mcp_auth_ok(request):
+        return Response("Unauthorized", status_code=401)
+
+    if request.method == "POST":
+        try:
+            body = await request.json()
+        except Exception:
+            return _mcp_respond(
+                {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}},
+                status=400,
+            )
+        resp = await _mcp_handle_jsonrpc(body)
+        if resp is None:
+            return Response(status_code=204)
+        return _mcp_respond(resp)
+
+    # GET → SSE transport
+    import json as _json
+    session_id = secrets.token_hex(16)
+    queue: asyncio.Queue = asyncio.Queue()
+    _mcp_sse_sessions[session_id] = queue
+
+    async def event_stream():
+        try:
+            yield f"event: endpoint\ndata: /mcp/messages?session_id={session_id}\n\n"
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    if event is None:
+                        break
+                    yield f"data: {_json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            _mcp_sse_sessions.pop(session_id, None)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def route_mcp_messages(request: Request) -> Response:
+    if not _mcp_auth_ok(request):
+        return Response("Unauthorized", status_code=401)
+
+    session_id = request.query_params.get("session_id", "")
+    queue = _mcp_sse_sessions.get(session_id)
+    if queue is None:
+        return Response("Session not found", status_code=404)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return Response("Bad Request", status_code=400)
+
+    resp = await _mcp_handle_jsonrpc(body)
+    if resp is not None:
+        await queue.put(resp)
+    return Response(status_code=202)
+
+
 routes = [
     # Public â no auth required.
     Route("/health",                            route_health),
@@ -1144,6 +1319,10 @@ routes = [
     WebSocketRoute("/api/pty",                  ws_proxy),
     WebSocketRoute("/api/ws",                   ws_proxy),
     WebSocketRoute("/api/events",               ws_proxy),
+
+    # MCP server – Bearer-token guarded, for Claude Desktop / mcp-remote.
+    Route("/mcp",          route_mcp,          methods=["GET", "POST"]),
+    Route("/mcp/messages", route_mcp_messages, methods=["POST"]),
 
     # Root: redirect to /setup if unconfigured, otherwise proxy the dashboard.
     Route("/",                                  route_root,          methods=ANY_METHOD),
