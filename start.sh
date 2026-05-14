@@ -25,4 +25,20 @@ fi
 # container), so removing the file unconditionally is safe.
 rm -f /data/.hermes/gateway.pid
 
+# ── GBrain — initialize brain database on first boot ─────────────────────────
+mkdir -p "$GBRAIN_HOME"
+if [ ! -f "$GBRAIN_HOME/.initialized" ]; then
+    echo "[gbrain] First boot — initializing brain database..."
+    gbrain init </dev/null 2>&1 | head -20 || true
+    # Create brain repo directories for business data
+    mkdir -p "$GBRAIN_HOME/brain/data/ventas"              "$GBRAIN_HOME/brain/companies"              "$GBRAIN_HOME/brain/people"              "$GBRAIN_HOME/brain/concepts"
+    if [ ! -d "$GBRAIN_HOME/brain/.git" ]; then
+        cd "$GBRAIN_HOME/brain" && git init -b main >/dev/null 2>&1 && \
+        printf '# Body Nostrum LLC Brain\n\nKnowledge base para Body Nostrum LLC.\n' > README.md && \
+        git add . && git commit -m "init brain repo" >/dev/null 2>&1 || true
+    fi
+    touch "$GBRAIN_HOME/.initialized"
+    echo "[gbrain] Brain initialized. GBRAIN_HOME=$GBRAIN_HOME"
+fi
+
 exec python /app/server.py
