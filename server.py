@@ -2,6 +2,18 @@
 Hermes Agent â Railway admin server.
 
 Responsibilities:
+        if tool_name == "gbrain_query":
+            text = await _call_gbrain(["query", arguments.get("question", "")])
+            return {"jsonrpc": "2.0", "id": msg_id, "result": {"content": [{"type": "text", "text": text}], "isError": False}}
+        if tool_name == "gbrain_search":
+            text = await _call_gbrain(["search", arguments.get("query", "")])
+            return {"jsonrpc": "2.0", "id": msg_id, "result": {"content": [{"type": "text", "text": text}], "isError": False}}
+        if tool_name == "gbrain_put_page":
+            text = await _call_gbrain(["put", arguments.get("slug", "")], stdin_data=arguments.get("content", ""))
+            return {"jsonrpc": "2.0", "id": msg_id, "result": {"content": [{"type": "text", "text": text}], "isError": False}}
+        if tool_name == "gbrain_get_page":
+            text = await _call_gbrain(["get", arguments.get("slug", "")])
+            return {"jsonrpc": "2.0", "id": msg_id, "result": {"content": [{"type": "text", "text": text}], "isError": False}}
   - Admin UI / setup wizard at /setup (Starlette + Jinja, cookie-auth guarded)
   - Management API at /setup/api/* (config, status, logs, gateway, pairing)
   - Reverse proxy at / and /* â native Hermes dashboard (hermes_cli/web_server, on 127.0.0.1:9119)
@@ -52,6 +64,7 @@ ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 HERMES_HOME = os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
+GBRAIN_HOME   = os.environ.get("GBRAIN_HOME", "/data/.gbrain")
 ENV_FILE = Path(HERMES_HOME) / ".env"
 PAIRING_DIR = Path(HERMES_HOME) / "pairing"
 PAIRING_TTL = 3600
@@ -1139,7 +1152,59 @@ _MCP_TOOLS = [
             "required": ["message"],
         },
     }
-]
+,
+    {
+        "name": "gbrain_query",
+        "description": (
+            "Hybrid search (vector + keyword + RRF) over the company brain. "
+            "Use for business questions about sales, products, customers, or any company data. "
+            "Returns ranked results with citations."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "The question or search query."}
+            },
+            "required": ["question"],
+        },
+    },
+    {
+        "name": "gbrain_search",
+        "description": "Fast keyword search over the company brain.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Keywords to search for."}
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "gbrain_put_page",
+        "description": (
+            "Write or update a brain page. Use to save business data, sales reports, "
+            "or any structured knowledge to the company brain."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string", "description": "Page ID, e.g. 'data/ventas/amazon-es-2025' or 'companies/naturdao'."},
+                "content": {"type": "string", "description": "Full markdown content of the page."}
+            },
+            "required": ["slug", "content"],
+        },
+    },
+    {
+        "name": "gbrain_get_page",
+        "description": "Read a brain page by its slug.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string", "description": "Page slug to retrieve."}
+            },
+            "required": ["slug"],
+        },
+    }]
 
 _mcp_sse_sessions: dict = {}  # session_id -> asyncio.Queue
 
@@ -1174,6 +1239,35 @@ async def _call_hermes(message: str) -> str:
         return f"[hermes-agent error] {exc}"
 
 
+
+
+async def _call_gbrain(args: list, stdin_data: str | None = None) -> str:
+    """Run a gbrain CLI command and return stdout."""
+    try:
+        env = {**os.environ, "GBRAIN_HOME": GBRAIN_HOME}
+        proc = await asyncio.create_subprocess_exec(
+            "gbrain", *args,
+            stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+        try:
+            input_bytes = stdin_data.encode() if stdin_data is not None else None
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=input_bytes), timeout=60.0
+            )
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return "[gbrain error] Request timed out after 60s"
+        if proc.returncode != 0:
+            err = stderr.decode("utf-8", errors="replace").strip()
+            return f"[gbrain error] exit {proc.returncode}: {err[:500]}"
+        result = stdout.decode("utf-8", errors="replace").strip()
+        return result or "[gbrain error] Empty response"
+    except Exception as exc:
+        return f"[gbrain error] {exc}"
 def _mcp_respond(data: dict, status: int = 200) -> Response:
     import json as _json
     return Response(
