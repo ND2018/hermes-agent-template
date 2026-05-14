@@ -64,6 +64,19 @@ RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/h
 COPY requirements.txt /app/requirements.txt
 RUN uv pip install --system --no-cache -r /app/requirements.txt
 
+# ── GBrain (garrytan/gbrain) — knowledge graph + hybrid search brain ─────────────────────────────────────────────────────────────────────────────────
+# Bun is required. git clone + bun link is the ONLY supported install path.
+# Do NOT use `npm install -g gbrain` (wrong package on npm, gbrain#658)
+# or `bun install -g github:garrytan/gbrain` (broken postinstall, gbrain#218).
+RUN curl -fsSL https://bun.sh/install | bash && \
+    git clone --depth 1 https://github.com/garrytan/gbrain.git /opt/gbrain && \
+    cd /opt/gbrain && \
+    /root/.bun/bin/bun install && \
+    /root/.bun/bin/bun link
+
+ENV PATH="/root/.bun/bin:$PATH"
+ENV GBRAIN_HOME=/data/.gbrain
+
 RUN mkdir -p /data/.hermes
 
 COPY server.py /app/server.py
