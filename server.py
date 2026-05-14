@@ -1244,7 +1244,7 @@ async def _call_hermes(message: str) -> str:
 async def _call_gbrain(args: list, stdin_data: str | None = None) -> str:
     """Run a gbrain CLI command and return stdout."""
     try:
-        env = {**os.environ, "GBRAIN_HOME": GBRAIN_HOME}
+        env = {**os.environ, "GBRAIN_HOME": GBRAIN_HOME, "PATH": "/root/.bun/bin:" + os.environ.get("PATH", "")}
         proc = await asyncio.create_subprocess_exec(
             "/root/.bun/bin/gbrain", *args,
             stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
