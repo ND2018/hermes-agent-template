@@ -1246,7 +1246,7 @@ async def _call_gbrain(args: list, stdin_data: str | None = None) -> str:
     try:
         env = {**os.environ, "GBRAIN_HOME": GBRAIN_HOME}
         proc = await asyncio.create_subprocess_exec(
-            "gbrain", *args,
+            "/root/.bun/bin/gbrain", *args,
             stdin=asyncio.subprocess.PIPE if stdin_data is not None else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
