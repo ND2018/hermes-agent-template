@@ -110,6 +110,7 @@ ENV_VARS = [
     ("STEPFUN_API_KEY",          "Step Plan",                "provider",  True),
     ("AI_GATEWAY_API_KEY",       "Vercel AI Gateway",        "provider",  True),
     ("GEMINI_API_KEY",           "Google AI Studio",         "provider",  True),
+    ("ANTHROPIC_API_KEY",        "Anthropic (Claude)",        "provider",  True),
     ("PARALLEL_API_KEY",         "Parallel (search)",        "tool",      True),
     ("FIRECRAWL_API_KEY",        "Firecrawl (scrape)",       "tool",      True),
     ("TAVILY_API_KEY",           "Tavily (search)",          "tool",      True),
@@ -494,7 +495,7 @@ class Gateway:
             # Write config.yaml so hermes picks up the model (env vars alone aren't always enough)
             write_config_yaml(read_env(ENV_FILE))
             self.proc = await asyncio.create_subprocess_exec(
-                "hermes", "gateway",
+                "hermes", "gateway", "run", "--replace",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 env=env,
