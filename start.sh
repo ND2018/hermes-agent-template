@@ -41,4 +41,20 @@ if [ ! -f "$GBRAIN_HOME/.initialized" ]; then
     echo "[gbrain] Brain initialized. GBRAIN_HOME=$GBRAIN_HOME"
 fi
 
+# ── Provider config — write Railway env vars to Hermes .env on every boot ──────
+# (Hermes reads its own .env for model credentials, separate from Railway env vars)
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+    grep -q "ANTHROPIC_API_KEY" /data/.hermes/.env 2>/dev/null || \
+        echo "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" >> /data/.hermes/.env
+fi
+if ! grep -q "^  default:" /data/.hermes/config.yaml 2>/dev/null; then
+    # First boot: set model to Haiku (fast + cheap for Telegram)
+    sed -i 's/provider: auto/provider: anthropic/' /data/.hermes/config.yaml 2>/dev/null || true
+fi
+
+# ── Telegram gateway — auto-start with --replace to kill any stale process ────
+echo "[hermes] Starting Telegram gateway..."
+nohup hermes gateway run --replace > /data/.hermes/logs/gateway.log 2>&1 &
+echo "[hermes] Gateway started (PID $!)"
+
 exec python /app/server.py
