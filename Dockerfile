@@ -32,9 +32,14 @@ RUN apt-get update && \
 # Deleting web/ afterwards makes hermes's internal _build_web_ui skip the
 # rebuild step (it early-returns when package.json is absent), so container
 # startup is fast and no runtime npm dependency is needed.
+# NOTE: We expand hermes-agent's `[all]` extra manually here, omitting `[mistral]`.
+# Upstream's `[mistral]` pins `mistralai>=2.3.0,<3`, but the `mistralai` project on
+# PyPI is currently quarantined (zero installable versions), which makes the full
+# `[all]` extra unresolvable. Drop `[mistral]` from our expansion until either
+# PyPI restores the package or upstream removes the pin.
 RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent && \
     cd /opt/hermes-agent && \
-    uv pip install --system --no-cache -e ".[all]" && \
+    uv pip install --system --no-cache -e ".[modal,daytona,vercel,messaging,matrix,cron,cli,dev,tts-premium,slack,pty,honcho,mcp,homeassistant,sms,acp,voice,dingtalk,feishu,google,bedrock,web]" && \
     cd /opt/hermes-agent/web && \
     npm install --silent && \
     npm run build && \
