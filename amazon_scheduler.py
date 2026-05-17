@@ -3,13 +3,15 @@ amazon_scheduler.py  —  Daily cloud jobs for Naturdao / Body Nostrum
 Runs inside the Hermes Railway process (asyncio, no extra deps).
 
 Schedule (UTC):
-  02:00  backup_gbrain.py          — GBrain pages → local JSON + GitHub
-  03:00  download_amazon_reports_auto.py  — Amazon SP-API Europa → GBrain
-  03:30  amazon_pl_diario.py       — P&L diario Europa → GBrain
+  02:00  backup_gbrain.py                  — GBrain pages → local JSON + GitHub
+  03:00  download_amazon_reports_auto.py   — Amazon SP-API Europa → GBrain
+  03:30  amazon_pl_diario.py               — P&L diario Europa → GBrain
+  04:00  amazon_pl_usa.py                  — P&L diario USA → GBrain
 
 Required Railway env vars:
-  MCP_API_KEY, HERMES_URL (or RAILWAY_PUBLIC_DOMAIN),
+  MCP_API_KEY, HERMES_URL,
   AMAZON_CLIENT_ID_EUROPA, AMAZON_CLIENT_SECRET_EUROPA, AMAZON_REFRESH_TOKEN_EUROPA,
+  AMAZON_CLIENT_ID_USA, AMAZON_CLIENT_SECRET_USA, AMAZON_REFRESH_TOKEN_USA,
   GITHUB_TOKEN, GITHUB_BACKUP_REPO (default: ND2018/gbrain-backup)
 """
 
@@ -27,8 +29,18 @@ SCRIPTS_DIR = Path(__file__).parent / "scripts"
 JOBS = [
     {"name": "backup-gbrain",  "hour": 2,  "minute": 0,  "script": "backup_gbrain.py"},
     {"name": "amazon-fetch",   "hour": 3,  "minute": 0,  "script": "download_amazon_reports_auto.py"},
-    {"name": "amazon-pl",      "hour": 3,  "minute": 30, "script": "amazon_pl_diario.py"},
+    {"name": "amazon-pl-eu",   "hour": 3,  "minute": 30, "script": "amazon_pl_diario.py"},
+    {"name": "amazon-pl-usa",  "hour": 4,  "minute": 0,  "script": "amazon_pl_usa.py"},
 ]
+
+
+def _build_env() -> dict:
+    """Build subprocess env: inherit Railway vars + alias MCP_API_KEY → MCP_KEY."""
+    env = {**os.environ}
+    # Scripts use MCP_KEY; Railway sets MCP_API_KEY — bridge the gap
+    if env.get("MCP_API_KEY") and not env.get("MCP_KEY"):
+        env["MCP_KEY"] = env["MCP_API_KEY"]
+    return env
 
 
 async def run_script(script_name: str) -> None:
@@ -40,7 +52,7 @@ async def run_script(script_name: str) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(SCRIPTS_DIR),
-            env={**os.environ},
+            env=_build_env(),
         )
         stdout, _ = await proc.communicate()
         output = stdout.decode(errors="replace").strip()
@@ -68,15 +80,15 @@ async def _loop(hour: int, minute: int, script_name: str) -> None:
 
 async def start() -> None:
     """Call this from server.py lifespan to launch all jobs."""
-    # Validate required env vars before starting
     missing = [v for v in (
-        "MCP_API_KEY", "AMAZON_CLIENT_ID_EUROPA",
-        "AMAZON_CLIENT_SECRET_EUROPA", "AMAZON_REFRESH_TOKEN_EUROPA",
+        "MCP_API_KEY",
+        "AMAZON_CLIENT_ID_EUROPA", "AMAZON_CLIENT_SECRET_EUROPA", "AMAZON_REFRESH_TOKEN_EUROPA",
+        "AMAZON_CLIENT_ID_USA",    "AMAZON_CLIENT_SECRET_USA",    "AMAZON_REFRESH_TOKEN_USA",
         "GITHUB_TOKEN",
     ) if not os.environ.get(v)]
     if missing:
-        log.warning(f"⚠ Amazon scheduler: missing env vars {missing} — jobs will fail at runtime")
+        log.warning(f"⚠ Amazon scheduler: missing env vars {missing} — those jobs will fail")
 
     for job in JOBS:
         asyncio.create_task(_loop(job["hour"], job["minute"], job["script"]))
-    log.info("🟢 Amazon scheduler started (UTC): backup@02:00 | fetch@03:00 | P&L@03:30")
+    log.info("🟢 Scheduler activo (UTC): backup@02:00 | fetch-EU@03:00 | P&L-EU@03:30 | P&L-USA@04:00")
