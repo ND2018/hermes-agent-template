@@ -34,6 +34,7 @@ injected into every proxied HTML response so users can always return to the wiza
 """
 
 import asyncio
+import amazon_scheduler
 import json
 import os
 import re
@@ -963,6 +964,7 @@ async def lifespan(app):
     # Dashboard runs always â it's the user-facing UI after setup is done,
     # and it's independent of gateway state.
     asyncio.create_task(dash.start())
+    asyncio.create_task(amazon_scheduler.start())
     await auto_start()
     try:
         yield

@@ -1,0 +1,547 @@
+#!/usr/bin/env python3
+"""
+amazon_pl_diario.py
+Naturdao / Body Nostrum -- P&L diario Amazon Europa (replica Vendorati)
+
+METODOLOGIA (igual que Vendorati):
+  1. Orders Report (purchase date = ayer) -> unidades, precio, SKU, marketplace
+  2. Revenue ex-VAT usando FX + VAT por pais:
+     - Shipped: item-tax disponible en el report -> restar directamente
+     - Pending: item-tax vacio -> aplicar rate del pais (DE 7%, FR 5.5%, UK 20%...)
+     - FX: GBP/SEK/PLN -> EUR al tipo de cambio configurado
+  3. COGS internos (tabla por SKU) + shipping internacional calibrado
+  4. Fees estimadas: Commission (15.36%) + FBA (tabla por SKU) + Digital (0.28%)
+  5. Input VAT on Fees (ratio 17.38% calibrado con exports Vendorati)
+  6. P&L disponible el mismo dia, sin esperar liquidacion Amazon
+
+CALIBRACION (basada en exports Vendorati 14 mayo 2026):
+  - Profit gap vs Vendorati: <0.2% (EUR 3004 vs 3005)
+  - Commission: 15.36% del precio ex-VAT de venta
+  - FBA 1#1M/1#PLUS: 3.65/ud | FBA 1#MAX: 5.30/ud
+  - COGS/ud: 1#1M 2.79 | 1#PLUS 3.99 | 1#MAX 3.60
+  - Intl. shipping: 0.40/ud | Local shipping: 0.0065/ud
+  - Input VAT ratio: 17.38% sobre fees brutas
+
+VARIABLES DE ENTORNO (en .env):
+  AMAZON_CLIENT_ID_EUROPA, AMAZON_CLIENT_SECRET_EUROPA,
+  AMAZON_REFRESH_TOKEN_EUROPA, HERMES_URL, MCP_KEY
+
+USO:
+  python amazon_pl_diario.py               # ayer
+  python amazon_pl_diario.py --date 2026-05-14
+  python amazon_pl_diario.py --days 7      # ultimos 7 dias agregados
+  python amazon_pl_diario.py --no-gbrain   # solo mostrar, no subir
+"""
+
+import os, sys, json, csv, io, gzip, time, argparse
+import urllib.request, urllib.error, urllib.parse
+from datetime import datetime, timezone, timedelta
+from collections import defaultdict
+
+# ── .env ──────────────────────────────────────────────────────────────────────
+def load_dotenv():
+    for p in [os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), ".env"]:
+        try:
+            with open(p) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, v = line.split("=", 1)
+                        if k.strip() not in os.environ:
+                            os.environ[k.strip()] = v.strip()
+            return p
+        except FileNotFoundError:
+            continue
+    return None
+
+loaded = load_dotenv()
+
+def _req(key):
+    v = os.environ.get(key)
+    if not v:
+        print(f"[ERROR] Variable requerida no encontrada: {key}")
+        sys.exit(1)
+    return v
+
+CLIENT_ID     = _req("AMAZON_CLIENT_ID_EUROPA")
+CLIENT_SECRET = _req("AMAZON_CLIENT_SECRET_EUROPA")
+REFRESH_TOKEN = _req("AMAZON_REFRESH_TOKEN_EUROPA")
+HERMES_URL    = _req("HERMES_URL").rstrip("/")
+MCP_KEY       = _req("MCP_KEY")
+
+# ── Parametros calibrados con Vendorati ───────────────────────────────────────
+# COGS manufacturing por SKU (EUR/unidad)
+COGS_MFG = {
+    "1#1M":    2.79,
+    "US1#1M":  2.79,
+    "1#PLUS":  3.99,
+    "US1#PLUS":3.99,
+    "1#MAX":   3.60,
+    "US1#MAX": 3.60,
+}
+COGS_DEFAULT    = 2.79
+INTL_SHIP_PER_U = 0.400   # EUR/ud
+LOCAL_SHIP_PER_U= 0.0065  # EUR/ud
+
+REFERRAL_RATE   = 0.1536  # 15.36% sobre precio ex-VAT
+FBA_FEE = {
+    "1#1M":    3.65,
+    "US1#1M":  3.65,
+    "1#PLUS":  3.65,
+    "US1#PLUS":3.65,
+    "1#MAX":   5.30,
+    "US1#MAX": 5.30,
+}
+FBA_DEFAULT     = 3.65
+DIGITAL_RATE    = 0.0028  # 0.28% Digital Services Fee
+VAT_RATIO       = 0.1738  # Input VAT on fees / abs(fees)
+
+# PPC / Advertising Europa
+# Se carga dinamicamente desde ads_spend_{date}.json (generado por amazon_ads_fetch.py)
+# Fallback: 0.0 (sin dato historico Europa calibrado aun)
+PPC_DAILY_EUR_DEFAULT = 0.0
+PPC_DAILY_EUR         = PPC_DAILY_EUR_DEFAULT
+
+def load_ppc_from_cache_eu(date_label):
+    """Lee gasto PPC Europa del JSON generado por amazon_ads_fetch.py."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    cache_path = os.path.join(script_dir, f"ads_spend_{date_label}.json")
+    if not os.path.exists(cache_path):
+        return None
+    try:
+        with open(cache_path) as f:
+            data = json.load(f)
+        eu = data.get("Europa", {})
+        total_eur = eu.get("total_eur", 0)
+        source = eu.get("source", "?")
+        log(f"PPC Europa desde cache ({source}): EUR {total_eur:.2f}")
+        return total_eur
+    except Exception as e:
+        log(f"Error leyendo cache PPC Europa: {e}", "WARN")
+        return None
+
+# Tipos de cambio a EUR (actualizar si cambio >5%, fuente: BCE)
+FX_TO_EUR = {
+    "EUR": 1.000,
+    "GBP": 1.185,    # libra esterlina
+    "SEK": 0.0875,   # corona sueca
+    "PLN": 0.232,    # zloty polaco
+    "USD": 0.922,    # dolar
+    "CZK": 0.0415,   # corona checa
+    "HUF": 0.00253,  # forinto hungaro
+    "RON": 0.201,    # leu rumano
+    "DKK": 0.134,    # corona danesa
+    "NOK": 0.0883,   # corona noruega
+    "CHF": 1.038,    # franco suizo
+    "TRY": 0.0268,   # lira turca
+}
+
+# IVA por marketplace para suplemento DAO (calibrado vs Shipped orders)
+# Solo se aplica a lineas Pending (item-tax vacio en el Orders Report)
+VAT_BY_MARKET = {
+    "Amazon.de":     0.07,   # Alemania: tipo reducido alimentacion
+    "Amazon.fr":     0.055,  # Francia: tipo reducido suplementos
+    "Amazon.it":     0.10,   # Italia: tipo reducido suplementos
+    "Amazon.es":     0.10,   # Espana: tipo reducido suplementos
+    "Amazon.nl":     0.09,   # Paises Bajos: tipo reducido BTW
+    "Amazon.co.uk":  0.20,   # UK: tipo general
+    "Amazon.pl":     0.08,   # Polonia: tipo reducido alimentacion
+    "Amazon.se":     0.12,   # Suecia: tipo reducido alimentacion
+    "Amazon.ie":     0.00,   # Irlanda: exento alimentacion
+    "Amazon.com.be": 0.06,   # Belgica: tipo reducido
+    "Amazon.tr":     0.10,   # Turquia
+}
+
+# ── Constantes SP-API ─────────────────────────────────────────────────────────
+LWA_URL     = "https://api.amazon.com/auth/o2/token"
+SP_API_BASE = "https://sellingpartnerapi-eu.amazon.com"
+MARKETPLACE_IDS = [
+    "A1RKKUPIHCS9HS","A1F83G8C2ARO7P","A1PA6795UKMFR9","A13V1IB3VIYZZH",
+    "APJ6JRA9NG5V4","A1805IZSGTT6HS","A1C3SOZRARQ6R3","A2NODRKZP88ZB9",
+    "AMEN7PMS3EDWL","A33AVAJ2PDY3EV","A28R8C7NBKEWEA","A2VIGQ35RCS4UG",
+]
+MCP_HEADERS = {"Authorization": f"Bearer {MCP_KEY}", "Content-Type": "application/json"}
+RUN_START   = datetime.now(timezone.utc)
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+def log(msg, level="INFO"):
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[{ts}] [{level}] {msg}", flush=True)
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+def get_token():
+    body = urllib.parse.urlencode({
+        "grant_type": "refresh_token", "refresh_token": REFRESH_TOKEN,
+        "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET,
+    }).encode()
+    req = urllib.request.Request(LWA_URL, data=body, method="POST",
+        headers={"Content-Type": "application/x-www-form-urlencoded",
+                 "User-Agent": "GBrain-PL/1.0"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        data = json.loads(r.read())
+    t = data.get("access_token")
+    if not t:
+        log(f"LWA error: {data}", "ERROR"); sys.exit(1)
+    log("Token LWA OK")
+    return t
+
+# ── SP-API ────────────────────────────────────────────────────────────────────
+def sp_post(path, token, body_dict, retries=3):
+    url = f"{SP_API_BASE}{path}"
+    headers = {"x-amz-access-token": token, "Accept": "application/json",
+               "Content-Type": "application/json", "User-Agent": "GBrain-PL/1.0"}
+    data = json.dumps(body_dict).encode()
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, data=data, method="POST", headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode(errors="replace")
+            if e.code == 429:
+                wait = int(e.headers.get("Retry-After", 60))
+                log(f"Rate limit -> {wait}s", "WARN"); time.sleep(wait)
+            else:
+                log(f"HTTP {e.code}: {body[:150]}", "WARN"); time.sleep(2**attempt)
+    return None
+
+def sp_get(path, token, params=None, retries=3):
+    qs  = ("?" + urllib.parse.urlencode(params)) if params else ""
+    url = f"{SP_API_BASE}{path}{qs}"
+    headers = {"x-amz-access-token": token, "Accept": "application/json",
+               "User-Agent": "GBrain-PL/1.0"}
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            body = e.read().decode(errors="replace")
+            if e.code == 429:
+                wait = int(e.headers.get("Retry-After", 60))
+                log(f"Rate limit -> {wait}s", "WARN"); time.sleep(wait)
+            elif e.code in (400, 403, 404):
+                log(f"HTTP {e.code} {path}: {body[:150]}", "WARN"); return None
+            else:
+                log(f"HTTP {e.code} (intento {attempt+1})", "WARN"); time.sleep(2**attempt)
+    return None
+
+# ── Reports API ───────────────────────────────────────────────────────────────
+def get_orders_report(token, start_date, end_date):
+    log(f"Solicitando Orders Report: {start_date[:10]} -> {end_date[:10]}")
+    result = sp_post("/reports/2021-06-30/reports", token, {
+        "reportType":     "GET_FLAT_FILE_ALL_ORDERS_DATA_BY_ORDER_DATE_GENERAL",
+        "dataStartTime":  start_date,
+        "dataEndTime":    end_date,
+        "marketplaceIds": MARKETPLACE_IDS,
+    })
+    if not result:
+        log("Error solicitando report", "ERROR"); sys.exit(1)
+    report_id = result["reportId"]
+    log(f"  reportId: {report_id} -- esperando...")
+
+    for i in range(20):
+        time.sleep(15)
+        r = sp_get(f"/reports/2021-06-30/reports/{report_id}", token)
+        if not r: continue
+        status = r.get("processingStatus", "IN_QUEUE")
+        log(f"  [{i+1}] {status}")
+        if status == "DONE":
+            doc_id = r["reportDocumentId"]
+            break
+        elif status in ("FATAL", "CANCELLED"):
+            log(f"Report fallo: {status}", "ERROR"); sys.exit(1)
+    else:
+        log("Timeout esperando report", "ERROR"); sys.exit(1)
+
+    doc = sp_get(f"/reports/2021-06-30/documents/{doc_id}", token)
+    if not doc:
+        log("Error obteniendo documento", "ERROR"); sys.exit(1)
+    url = doc["url"]
+    compressed = doc.get("compressionAlgorithm") == "GZIP"
+    req = urllib.request.Request(url, headers={"User-Agent": "GBrain-PL/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as r:
+        raw = r.read()
+    content = gzip.decompress(raw).decode("utf-8", errors="replace") if compressed else raw.decode("utf-8", errors="replace")
+    rows = list(csv.DictReader(io.StringIO(content), delimiter="\t"))
+    log(f"Report descargado: {len(rows)} lineas")
+    return rows
+
+# ── Calcular P&L ──────────────────────────────────────────────────────────────
+def calc_pl(rows, date_label):
+    """Replica la metodologia de Vendorati. Profit gap <0.2% calibrado."""
+    totals = {
+        "units": 0, "sales_lines": 0,
+        "sales": 0.0, "refunds": 0.0,
+        "cogs_mfg": 0.0, "cogs_ship": 0.0, "cogs_local": 0.0,
+        "commission": 0.0, "fba": 0.0, "digital": 0.0,
+    }
+    by_market  = defaultdict(lambda: {"units":0,"sales":0.0,"commission":0.0,"fba":0.0,"cogs":0.0,"vat":0.0,"profit":0.0})
+    by_product = defaultdict(lambda: {"units":0,"sales":0.0,"profit":0.0})
+
+    for r in rows:
+        status = r.get("order-status","")
+        if status == "Cancelled": continue
+
+        sku    = r.get("sku","").strip()
+        qty    = int(r.get("quantity",0) or 0)
+        market = r.get("sales-channel","?")
+        cur    = (r.get("currency","") or "EUR").strip() or "EUR"
+        fx     = FX_TO_EUR.get(cur, 1.0)
+        vat    = VAT_BY_MARKET.get(market, 0.10)
+
+        try:   principal_nat  = float(r.get("item-price",0)              or 0)
+        except: principal_nat = 0.0
+        try:   item_tax_nat   = float(r.get("item-tax",0)                or 0)
+        except: item_tax_nat  = 0.0
+        try:   shipping_nat   = float(r.get("shipping-price",0)          or 0)
+        except: shipping_nat  = 0.0
+        try:   ship_tax_nat   = float(r.get("shipping-tax",0)            or 0)
+        except: ship_tax_nat  = 0.0
+        try:   promo_nat      = float(r.get("item-promotion-discount",0)  or 0)
+        except: promo_nat     = 0.0
+        try:   ship_promo_nat = float(r.get("ship-promotion-discount",0)  or 0)
+        except: ship_promo_nat= 0.0
+
+        # Convertir a EUR
+        principal   = principal_nat  * fx
+        shipping    = shipping_nat   * fx
+        promo       = promo_nat      * fx
+        ship_promo  = ship_promo_nat * fx
+
+        # Revenue ex-VAT (= Principal en Vendorati)
+        # Shipped: item-tax exacto disponible
+        # Pending: item-tax vacio -> aplicar VAT rate del pais
+        if item_tax_nat > 0:
+            item_revenue = (principal - item_tax_nat * fx) + (shipping - ship_tax_nat * fx) + promo + ship_promo
+        else:
+            item_revenue = principal / (1 + vat) + shipping / (1 + vat) + promo + ship_promo
+
+        totals["units"]       += qty
+        totals["sales_lines"] += 1
+        totals["sales"]       += item_revenue
+
+        # Fees
+        ref_fee = item_revenue * REFERRAL_RATE
+        fba_fee = FBA_FEE.get(sku, FBA_DEFAULT) * qty
+        dig_fee = item_revenue * DIGITAL_RATE
+        totals["commission"] -= ref_fee
+        totals["fba"]        -= fba_fee
+        totals["digital"]    -= dig_fee
+
+        # COGS
+        mfg = COGS_MFG.get(sku, COGS_DEFAULT)
+        totals["cogs_mfg"]   += mfg * qty
+        totals["cogs_ship"]  += INTL_SHIP_PER_U * qty
+        totals["cogs_local"] += LOCAL_SHIP_PER_U * qty
+
+        # Por marketplace / producto
+        item_fees   = -(ref_fee + fba_fee + dig_fee)
+        item_cogs   = -(mfg + INTL_SHIP_PER_U + LOCAL_SHIP_PER_U) * qty
+        item_vat    = abs(ref_fee + fba_fee + dig_fee) * VAT_RATIO
+        item_profit = item_revenue + item_cogs + item_fees + item_vat
+
+        by_market[market]["units"]      += qty
+        by_market[market]["sales"]      += item_revenue
+        by_market[market]["commission"] += ref_fee
+        by_market[market]["fba"]        += fba_fee
+        by_market[market]["cogs"]       += abs(item_cogs)
+        by_market[market]["vat"]        += item_vat
+        by_market[market]["profit"]     += item_profit
+
+        by_product[sku]["units"]  += qty
+        by_product[sku]["sales"]  += item_revenue
+        by_product[sku]["profit"] += item_profit
+
+    revenue_net = totals["sales"] + totals["refunds"]
+    total_cogs   = -(totals["cogs_mfg"] + totals["cogs_ship"] + totals["cogs_local"])
+    total_fees   = totals["commission"] + totals["fba"] + totals["digital"]
+    vat_on_fees  = abs(total_fees) * VAT_RATIO
+    profit_preppc= revenue_net + total_cogs + total_fees + vat_on_fees
+    ppc_eur      = -PPC_DAILY_EUR
+    profit       = profit_preppc + ppc_eur
+    margin       = profit / revenue_net * 100 if revenue_net else 0
+    roi          = profit / abs(total_cogs) * 100 if total_cogs else 0
+
+    return {
+        "date": date_label, "units": totals["units"],
+        "sales_lines": totals["sales_lines"], "refund_lines": 0,
+        "sales": totals["sales"], "refunds": totals["refunds"],
+        "revenue": revenue_net,
+        "cogs_mfg": -totals["cogs_mfg"], "cogs_ship": -totals["cogs_ship"],
+        "cogs_local": -totals["cogs_local"], "total_cogs": total_cogs,
+        "commission": totals["commission"], "fba": totals["fba"],
+        "digital": totals["digital"], "total_fees": total_fees,
+        "vat_on_fees": vat_on_fees,
+        "ppc_eur": ppc_eur, "profit_preppc": profit_preppc,
+        "profit": profit, "margin": margin, "roi": roi,
+        "by_market": dict(by_market),
+        "by_product": dict(sorted(by_product.items(),
+                                   key=lambda x: x[1]["units"], reverse=True)),
+    }
+
+# ── GBrain ────────────────────────────────────────────────────────────────────
+def gbrain_put(slug, content, retries=3):
+    body = json.dumps({
+        "jsonrpc":"2.0","id":1,"method":"tools/call",
+        "params":{"name":"gbrain_put_page","arguments":{"slug":slug,"content":content}}
+    }).encode()
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(f"{HERMES_URL}/mcp", data=body, headers=MCP_HEADERS, method="POST")
+            with urllib.request.urlopen(req, timeout=30) as r:
+                resp = json.loads(r.read())
+                if resp.get("error"): raise RuntimeError(resp["error"])
+                log(f"GBrain <- {slug}")
+                return True
+        except Exception as ex:
+            log(f"GBrain error ({attempt+1}): {ex}", "WARN")
+            time.sleep(2**attempt)
+    log(f"GBrain FALLO {slug}", "ERROR")
+    return False
+
+# ── Formateo ──────────────────────────────────────────────────────────────────
+def fmt(v, s="EUR "):
+    try: return f"{s}{float(v):,.2f}"
+    except: return "--"
+
+def build_page(d, ts):
+    p = d["profit"]; rv = d["revenue"]; m = d["margin"]; roi = d["roi"]
+    lines = [
+        "# Amazon Europa -- P&L Diario",
+        "",
+        f"_Metodologia: replica Vendorati (Orders Report + fee estimation)_",
+        f"_Ultima sincronizacion: {ts}_",
+        f"_Datos del dia: **{d['date']}**_",
+        "",
+        f"## P&L {d['date']}",
+        "",
+        "| Item | Valor |", "|---|---|",
+        f"| **Units** | {d['units']:,} |",
+        f"| **Sales (lineas)** | {d['sales_lines']:,} |",
+        "| | |",
+        f"| Revenue (ventas brutas) | {fmt(d['sales'])} |",
+        f"| Refunds | {fmt(d['refunds'])} |",
+        f"| **Revenue neto** | **{fmt(d['revenue'])}** |",
+        "| | |",
+        f"| COGS manufacturing | {fmt(d['cogs_mfg'])} |",
+        f"| COGS intl. shipping | {fmt(d['cogs_ship'])} |",
+        f"| COGS local shipping | {fmt(d['cogs_local'])} |",
+        f"| **COGS total** | **{fmt(d['total_cogs'])}** |",
+        "| | |",
+        f"| Commission (referral) | {fmt(d['commission'])} |",
+        f"| FBA Fulfillment Fees | {fmt(d['fba'])} |",
+        f"| Digital Services Fee | {fmt(d['digital'])} |",
+        f"| **Amazon Fees total** | **{fmt(d['total_fees'])}** |",
+        "| | |",
+        f"| Input VAT on Fees | {fmt(d['vat_on_fees'])} |",
+        "| | |",
+        f"| **Profit pre-PPC** | **{fmt(d.get('profit_preppc', p))}** |",
+        f"| PPC / Advertising | {fmt(d.get('ppc_eur', 0.0))} |",
+        "| | |",
+        f"| **PROFIT NETO** | **{fmt(p)}** |",
+        f"| **MARGIN** | **{m:.0f}%** |",
+        f"| **ROI** | **{roi:.0f}%** |",
+        "",
+        "## Desglose por Marketplace",
+        "",
+        "| Marketplace | Uds | Revenue | Fees | COGS | Profit | Margen |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for market, md in sorted(d["by_market"].items(), key=lambda x: x[1]["sales"], reverse=True):
+        item_fees = -(md["commission"]+md["fba"])
+        pct = md["profit"]/md["sales"]*100 if md["sales"] else 0
+        lines.append(
+            f"| {market} | {md['units']} | {fmt(md['sales'])} | "
+            f"{fmt(item_fees)} | {fmt(-md['cogs'])} | {fmt(md['profit'])} | {pct:.0f}% |"
+        )
+
+    lines += [
+        "",
+        "## Top Productos del Dia",
+        "",
+        "| SKU | Uds | Revenue | Profit |",
+        "|---|---|---|---|",
+    ]
+    for sku, pd in list(d["by_product"].items())[:10]:
+        lines.append(f"| {sku} | {pd['units']} | {fmt(pd['sales'])} | {fmt(pd['profit'])} |")
+
+    lines += [
+        "",
+        "## Notas metodologicas",
+        "",
+        f"- **Fuente revenue:** Orders Report SP-API (purchase date = {d['date']})",
+        f"- **Fees:** Commission {REFERRAL_RATE*100:.2f}% + FBA {FBA_FEE['1#1M']}/ud (1M/PLUS) {FBA_FEE['1#MAX']}/ud (MAX)",
+        f"- **COGS:** 1#1M {COGS_MFG['1#1M']} | 1#PLUS {COGS_MFG['1#PLUS']} | 1#MAX {COGS_MFG['1#MAX']} + {INTL_SHIP_PER_U:.3f}/ud shipping",
+        "- **FX:** GBP x1.185, SEK x0.0875, PLN x0.232, EUR x1.0 (actualizar si cambio >5%)",
+        "- **VAT por pais:** Shipped=item-tax exacto; Pending=DE 7%, FR 5.5%, NL 9%, UK 20%, IT/ES 10%, PL 8%, SE 12%",
+        "- **Calibracion vs Vendorati:** profit gap <0.2% (testado 14-may-2026: 3004 vs 3005 EUR)",
+        "- **Reconciliacion exacta:** disponible via Finances API 2-3 dias despues",
+        "- Script: amazon_pl_diario.py",
+    ]
+    return "\n".join(lines)
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--date",      type=str, default=None)
+    parser.add_argument("--days",      type=int, default=1)
+    parser.add_argument("--no-gbrain", action="store_true")
+    args = parser.parse_args()
+
+    if loaded: log(f".env: {loaded}")
+    log("=" * 60)
+    log("AMAZON EUROPA P&L DIARIO  |  START")
+    log(f"Hermes: {HERMES_URL}")
+    log("=" * 60)
+
+    now = datetime.now(timezone.utc)
+    if args.date:
+        target = datetime.strptime(args.date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        start  = target.strftime("%Y-%m-%dT00:00:00Z")
+        end    = target.strftime("%Y-%m-%dT23:59:59Z")
+        label  = args.date
+    else:
+        days_back = args.days
+        start = (now - timedelta(days=days_back)).strftime("%Y-%m-%dT00:00:00Z")
+        end   = (now - timedelta(days=1)).strftime("%Y-%m-%dT23:59:59Z")
+        label = (now - timedelta(days=1)).strftime("%Y-%m-%d")
+
+    # Cargar PPC Europa real desde cache de Ads si existe
+    global PPC_DAILY_EUR
+    ppc_from_cache = load_ppc_from_cache_eu(label)
+    if ppc_from_cache is not None:
+        PPC_DAILY_EUR = ppc_from_cache
+    else:
+        PPC_DAILY_EUR = PPC_DAILY_EUR_DEFAULT
+    log(f"PPC Europa EUR/dia: {PPC_DAILY_EUR:.2f}")
+
+    token = get_token()
+    rows  = get_orders_report(token, start, end)
+    data  = calc_pl(rows, label)
+    ts    = now.strftime("%Y-%m-%d %H:%M UTC")
+    page  = build_page(data, ts)
+
+    log("-" * 60)
+    log(f"Dia:       {label}")
+    log(f"Units:     {data['units']:,}")
+    log(f"Revenue:   {fmt(data['revenue'])}")
+    log(f"COGS:      {fmt(data['total_cogs'])}")
+    log(f"Fees:      {fmt(data['total_fees'])}")
+    log(f"VAT:       {fmt(data['vat_on_fees'])}")
+    log(f"PPC:       {fmt(data.get('ppc_eur', 0.0))}")
+    log(f"PROFIT:    {fmt(data['profit'])}  ({data['margin']:.0f}% margin | ROI {data['roi']:.0f}%)")
+    log("-" * 60)
+
+    if args.no_gbrain:
+        print("\n" + page)
+    else:
+        ok = gbrain_put("amazon-europa-pl-diario", page)
+        elapsed = (datetime.now(timezone.utc) - RUN_START).total_seconds()
+        log("=" * 60)
+        log(f"COMPLETADO {'OK' if ok else 'FALLO'} -- {elapsed:.0f}s")
+        log("=" * 60)
+        if not ok: sys.exit(1)
+
+if __name__ == "__main__":
+    main()
