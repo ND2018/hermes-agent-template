@@ -80,6 +80,8 @@ ENV GBRAIN_HOME=/data/.gbrain
 RUN mkdir -p /data/.hermes
 
 COPY server.py /app/server.py
+COPY amazon_scheduler.py /app/amazon_scheduler.py
+COPY scripts/ /app/scripts/
 COPY templates/ /app/templates/
 COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
