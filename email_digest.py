@@ -88,7 +88,7 @@ def fetch_recent_emails(account_email, password, hours=24):
 
         for msg_id in msg_ids[-60:]:   # màx 60 per compte
             try:
-                _, msg_data = M.fetch(msg_id, "(RFC822)")
+                _, msg_data = M.fetch(msg_id, "(BODY.PEEK[])")
                 if not msg_data or not msg_data[0]:
                     continue
                 msg = email.message_from_bytes(msg_data[0][1])
