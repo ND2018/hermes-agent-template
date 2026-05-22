@@ -1439,6 +1439,247 @@ async def route_velocity_put(request: Request) -> Response:
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
+
+# ── Velocity Dashboard (Chrome-compatible, token-auth) ────────────────────────
+VELOCITY_DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="ca">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Velocitat Vendes — Naturdao</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" crossorigin="anonymous"></script>
+<style>
+:root{color-scheme:light}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;background:#f0f4ff;color:#1e293b;padding:16px}
+h1{font-size:16px;font-weight:700;margin-bottom:2px}
+.sub{font-size:11px;color:#64748b;margin-bottom:14px}
+.status{font-size:11px;padding:4px 10px;border-radius:12px;display:inline-flex;align-items:center;gap:5px;margin-bottom:14px}
+.status.loading{background:#fef3c7;color:#92400e}
+.status.ok{background:#dcfce7;color:#166534}
+.status.error{background:#fee2e2;color:#991b1b}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.filters span{font-size:11px;color:#64748b}
+.fbtn{font-size:11px;padding:3px 10px;border-radius:5px;border:1px solid #cbd5e1;background:#fff;color:#64748b;cursor:pointer}
+.sep{width:1px;height:20px;background:#e2e8f0}
+.kpi-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(108px,1fr));gap:8px;margin-bottom:12px}
+.kc{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:9px 12px}
+.kc .kl{font-size:9px;text-transform:uppercase;letter-spacing:.06em;color:#94a3b8;margin-bottom:2px}
+.kc .kv{font-size:20px;font-weight:700;color:#1e293b;line-height:1.1}
+.kc .ks{font-size:10px;color:#94a3b8;margin-top:1px}
+.sku-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(105px,1fr));gap:7px;margin-bottom:12px}
+.sc{background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:7px 10px}
+.sc .sl{font-size:9px;font-family:monospace;font-weight:700;margin-bottom:2px}
+.sc .sv{font-size:16px;font-weight:700;font-family:monospace;color:#1e293b}
+.sc .ss{font-size:10px;color:#94a3b8;margin-top:1px}
+.mkt-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.mc{background:#fff;border:1px solid #e2e8f0;border-radius:6px;padding:8px 12px}
+.mc .ml{font-size:9px;font-weight:700;margin-bottom:2px}
+.mc .mv{font-size:18px;font-weight:700;font-family:monospace;color:#1e293b}
+.mc .ms{font-size:10px;color:#94a3b8}
+.chart-grid{display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:12px}
+.chart-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cc{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:14px}
+.cc h2{font-size:11px;font-weight:600;color:#64748b;margin-bottom:10px}
+.cc canvas{max-height:220px}
+.donut-wrap{display:flex;align-items:center;justify-content:center;min-height:220px}
+.donut-wrap canvas{max-height:200px;max-width:200px}
+.pbtn{font-size:11px;padding:4px 10px;border-radius:5px;border:1px solid #cbd5e1;background:#fff;color:#64748b;cursor:pointer}
+.pbtn.active{border-color:#4f46e5;background:#eef2ff;color:#4f46e5;font-weight:700}
+.period-lbl{font-size:12px;color:#4f46e5;font-weight:700}
+.view-tabs{display:flex;align-items:center;gap:6px;margin-bottom:10px}
+.vtab{font-size:11px;padding:4px 12px;border-radius:5px;border:1px solid #cbd5e1;background:#fff;color:#64748b;cursor:pointer}
+.vtab.active{border-color:#4f46e5;background:#eef2ff;color:#4f46e5;font-weight:700}
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid #fbbf24;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<h1>📈 Velocitat Vendes per SKU — Naturdao</h1>
+<p class="sub">Dades: Hermes privat · Actualitzat cada nit automàticament</p>
+<div id="status" class="status loading"><span class="spinner"></span> Carregant...</div>
+<div id="app" style="display:none">
+  <div class="filters">
+    <span>Canal:</span><div id="canal-btns"></div>
+    <div class="sep"></div>
+    <span>Producte:</span><div id="sku-btns"></div>
+    <div class="sep"></div>
+    <div style="display:flex;gap:4px">
+      <button class="pbtn" onclick="setPreset(30)">30d</button>
+      <button class="pbtn" onclick="setPreset(60)">60d</button>
+      <button class="pbtn" onclick="setPreset(90)">90d</button>
+      <button class="pbtn" onclick="setPreset(182)">6m</button>
+      <button class="pbtn" onclick="setPreset(365)">1a</button>
+    </div>
+    <span id="period-lbl" class="period-lbl"></span>
+  </div>
+  <div class="kpi-row" id="kpis"></div>
+  <div class="sku-row" id="skus"></div>
+  <div class="mkt-row" id="markets"></div>
+  <div class="view-tabs">
+    <span style="font-size:10px;color:#94a3b8">Gràfics per:</span>
+    <button class="vtab active" onclick="setView('canal')">Canal</button>
+    <button class="vtab" onclick="setView('sku')">Producte</button>
+  </div>
+  <div class="chart-grid">
+    <div class="cc"><h2>Unitats per canal</h2><canvas id="cs"></canvas></div>
+    <div class="cc"><h2>Mix</h2><div class="donut-wrap"><canvas id="cd"></canvas></div></div>
+  </div>
+  <div class="chart-row">
+    <div class="cc"><h2>Tendència</h2><canvas id="cl"></canvas></div>
+    <div class="cc"><h2>Ranking</h2><canvas id="cb"></canvas></div>
+  </div>
+</div>
+<script>
+const TOKEN=new URLSearchParams(location.search).get('token')||'';
+const API_URL='/api/velocity?token='+encodeURIComponent(TOKEN);
+const CANAL_ORDER=["WEB_B2C","B2B","MAJORISTA_NATURITAS","AMZ_EU","AMZ_USA"];
+const CANAL_LABELS={"WEB_B2C":"Web B2C","B2B":"B2B","MAJORISTA_NATURITAS":"Majorista","AMZ_EU":"Amazon EU","AMZ_USA":"Amazon USA"};
+const CANAL_COLORS={"WEB_B2C":"#6366f1","B2B":"#f59e0b","MAJORISTA_NATURITAS":"#10b981","AMZ_EU":"#3b82f6","AMZ_USA":"#ef4444"};
+const SKU_ORDER=["1#1M","1#3M","1#PLUS","1#MAX","US1#1M","US1#PLUS","US1#MAX"];
+const SKU_COLORS={"1#1M":"#6366f1","1#3M":"#8b5cf6","1#PLUS":"#06b6d4","1#MAX":"#f59e0b","US1#1M":"#ef4444","US1#PLUS":"#f97316","US1#MAX":"#ec4899"};
+const EU_SKUS=["1#1M","1#3M","1#PLUS","1#MAX"];
+const USA_SKUS=["US1#1M","US1#PLUS","US1#MAX"];
+const MNAMES=['gen','feb','mar','abr','mai','jun','jul','ago','set','oct','nov','des'];
+let SKU_DATA={},MONTHS=[],MLBL=[],MAX_DATE=new Date(),activePreset=182;
+let activeCanal=new Set(CANAL_ORDER),activeSku=new Set(SKU_ORDER),chartView='canal';
+let CS,CD,CL,CB;
+async function loadData(){
+  try{
+    const r=await fetch(API_URL);
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    const d=await r.json();
+    const dataset={updated:(d.meta&&d.meta.updated)||new Date().toISOString().slice(0,10),months:d.MONTHS||[],data:d.SKU_DATA||{}};
+    if(!dataset.months.length)throw new Error('Sense dades');
+    initDashboard(dataset);
+    document.getElementById('status').className='status ok';
+    document.getElementById('status').textContent='✅ Dades del '+dataset.updated;
+  }catch(err){
+    document.getElementById('status').className='status error';
+    document.getElementById('status').textContent='❌ '+err.message;
+  }
+}
+function initDashboard(ds){
+  SKU_DATA=ds.data;MONTHS=ds.months;
+  MLBL=MONTHS.map(m=>{const[y,mo]=m.split('-').map(Number);return MNAMES[mo-1]+' '+String(y).slice(2);});
+  const lastM=MONTHS[MONTHS.length-1];
+  if(lastM){const[y,mo]=lastM.split('-').map(Number);MAX_DATE=new Date(y,mo-1,28);}
+  document.getElementById('app').style.display='block';
+  buildFilters();setPreset(182);
+}
+function buildFilters(){
+  const cb=document.getElementById('canal-btns');cb.innerHTML='';
+  CANAL_ORDER.forEach(c=>{
+    const b=document.createElement('button');b.className='fbtn active';b.textContent=CANAL_LABELS[c];
+    b.style.borderColor=CANAL_COLORS[c];b.style.background=CANAL_COLORS[c];b.style.color='#fff';
+    b.onclick=()=>{if(activeCanal.has(c)){if(activeCanal.size===1)return;activeCanal.delete(c);b.classList.remove('active');b.style.background='#fff';b.style.color='#64748b';}else{activeCanal.add(c);b.classList.add('active');b.style.background=CANAL_COLORS[c];b.style.color='#fff';}update();};
+    cb.appendChild(b);
+  });
+  const sb=document.getElementById('sku-btns');sb.innerHTML='';
+  SKU_ORDER.forEach(s=>{
+    const b=document.createElement('button');b.className='fbtn active';b.textContent=s;b.style.fontFamily='monospace';
+    b.style.borderColor=SKU_COLORS[s];b.style.background=SKU_COLORS[s];b.style.color='#fff';
+    b.onclick=()=>{if(activeSku.has(s)){if(activeSku.size===1)return;activeSku.delete(s);b.classList.remove('active');b.style.background='#fff';b.style.color='#64748b';}else{activeSku.add(s);b.classList.add('active');b.style.background=SKU_COLORS[s];b.style.color='#fff';}update();};
+    sb.appendChild(b);
+  });
+}
+function getQty(s,c,m){return(SKU_DATA[s]&&SKU_DATA[s][c]&&SKU_DATA[s][c][m])||0;}
+function dim(y,m0){return new Date(y,m0+1,0).getDate();}
+function monthFrac(ms,sd){
+  const[y,m]=ms.split('-').map(Number),m0=m-1;
+  const mS=new Date(y,m0,1),rawE=new Date(y,m0,dim(y,m0));
+  const effE=rawE<=MAX_DATE?rawE:new Date(MAX_DATE);const effS=mS>=sd?mS:new Date(sd);
+  if(effS>effE)return 0;
+  return(Math.round((effE-effS)/864e5)+1)/(Math.round((effE-mS)/864e5)+1);
+}
+function computePreset(days){
+  const sd=new Date(MAX_DATE);sd.setDate(sd.getDate()-days+1);
+  const skus=SKU_ORDER.filter(s=>activeSku.has(s));
+  const canals=CANAL_ORDER.filter(c=>activeCanal.has(c));
+  const months=MONTHS.filter(ms=>{const[y,mo]=ms.split('-').map(Number);return new Date(y,mo-1,1)<=MAX_DATE&&new Date(y,mo-1,dim(y,mo-1))>=sd;});
+  const cm={};canals.forEach(c=>{cm[c]={};months.forEach(m=>{cm[c][m]=0;});});
+  skus.forEach(s=>canals.forEach(c=>months.forEach(m=>{cm[c][m]+=Math.round(getQty(s,c,m)*monthFrac(m,sd));})));
+  const sm={};skus.forEach(s=>{sm[s]={};months.forEach(m=>{sm[s][m]=canals.reduce((a,c)=>a+Math.round(getQty(s,c,m)*monthFrac(m,sd)),0);});});
+  const ct={};canals.forEach(c=>{ct[c]=months.reduce((a,m)=>a+(cm[c][m]||0),0);});
+  const st={};skus.forEach(s=>{st[s]=canals.reduce((a,c)=>a+months.reduce((b,m)=>b+Math.round(getQty(s,c,m)*monthFrac(m,sd)),0),0);});
+  return{months,skus,canals,cm,sm,ct,st,grand:canals.reduce((a,c)=>a+ct[c],0),presetDays:days};
+}
+const PLBL={30:'30d',60:'60d',90:'90d',182:'6m',365:'1a'};
+function setPreset(days){
+  activePreset=days;
+  document.querySelectorAll('.pbtn').forEach(b=>b.classList.toggle('active',b.textContent===PLBL[days]));
+  const e=new Date(MAX_DATE),s=new Date(MAX_DATE);s.setDate(s.getDate()-days+1);
+  const mn=d=>d.getDate()+' '+MNAMES[d.getMonth()]+(s.getFullYear()!==e.getFullYear()?' '+String(d.getFullYear()).slice(2):'');
+  document.getElementById('period-lbl').textContent=mn(s)+' → '+mn(e);
+  update();
+}
+function setView(v){chartView=v;document.querySelectorAll('.vtab').forEach(b=>b.classList.toggle('active',b.textContent===(v==='canal'?'Canal':'Producte')));const d=computePreset(activePreset);renderCharts(d);}
+function update(){const d=computePreset(activePreset);renderKPIs(d);renderSKUs(d);renderMarkets(d);renderCharts(d);}
+function renderKPIs(d){
+  const{canals,ct,st,skus,grand,presetDays:pd,months:ms}=d,n=ms.length;
+  const rate=v=>pd?Math.round(v/pd*30):Math.round(v/Math.max(n,1));
+  const eu=EU_SKUS.filter(s=>skus.includes(s)).reduce((a,s)=>a+(st[s]||0),0);
+  const usa=USA_SKUS.filter(s=>skus.includes(s)).reduce((a,s)=>a+(st[s]||0),0);
+  const cards=[
+    {l:'Total',v:grand.toLocaleString('ca'),s:pd+' dies',bc:''},
+    {l:'Mitjana/mes',v:rate(grand).toLocaleString('ca'),s:'u/mes',bc:''},
+    ...canals.map(c=>({l:CANAL_LABELS[c],v:ct[c].toLocaleString('ca'),s:rate(ct[c]).toLocaleString('ca')+' u/mes',bc:CANAL_COLORS[c]})),
+    {l:'🇪🇺 EU',v:eu.toLocaleString('ca'),s:rate(eu).toLocaleString('ca')+' u/mes',bc:'#3b82f6'},
+    {l:'🇺🇸 USA',v:usa.toLocaleString('ca'),s:rate(usa).toLocaleString('ca')+' u/mes',bc:'#ef4444'},
+  ];
+  document.getElementById('kpis').innerHTML=cards.map(c=>`<div class="kc" style="${c.bc?'border-left:3px solid '+c.bc:''}"><div class="kl" style="${c.bc?'color:'+c.bc:''}">${c.l}</div><div class="kv">${c.v}</div><div class="ks">${c.s}</div></div>`).join('');
+}
+function renderSKUs(d){
+  const{skus,st,months:ms,presetDays:pd}=d,n=ms.length;
+  document.getElementById('skus').innerHTML=skus.filter(s=>(st[s]||0)>0).map(s=>{
+    const v=st[s]||0,r=pd?Math.round(v/pd*30):Math.round(v/Math.max(n,1)),col=SKU_COLORS[s];
+    return`<div class="sc" style="border-left:3px solid ${col}"><div class="sl" style="color:${col}">${s}</div><div class="sv">${v.toLocaleString('ca')}</div><div class="ss">${r.toLocaleString('ca')} u/mes</div></div>`;
+  }).join('');
+}
+function renderMarkets(d){
+  const{skus,st,months:ms,presetDays:pd}=d,n=ms.length;
+  const rate=v=>pd?Math.round(v/pd*30):Math.round(v/Math.max(n,1));
+  const eu=EU_SKUS.filter(s=>skus.includes(s)).reduce((a,s)=>a+(st[s]||0),0);
+  const usa=USA_SKUS.filter(s=>skus.includes(s)).reduce((a,s)=>a+(st[s]||0),0);
+  document.getElementById('markets').innerHTML=`<div class="mc" style="border-left:3px solid #3b82f6"><div class="ml" style="color:#3b82f6">🇪🇺 Europa</div><div class="mv">${eu.toLocaleString('ca')}</div><div class="ms">${rate(eu).toLocaleString('ca')} u/mes</div></div><div class="mc" style="border-left:3px solid #ef4444"><div class="ml" style="color:#ef4444">🇺🇸 USA</div><div class="mv">${usa.toLocaleString('ca')}</div><div class="ms">${rate(usa).toLocaleString('ca')} u/mes</div></div>`;
+}
+const LEG={position:'bottom',labels:{color:'#64748b',font:{size:10},boxWidth:10}};
+const AXIS={ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'#f1f5f9'}};
+const stkP={id:'st',afterDatasetsDraw(chart){const{ctx,data,scales}=chart;if(!scales.x||!scales.y||!data.datasets.length)return;ctx.save();ctx.font='bold 9px Segoe UI';ctx.fillStyle='#334155';ctx.textAlign='center';ctx.textBaseline='bottom';for(let i=0;i<data.datasets[0].data.length;i++){const tot=data.datasets.reduce((s,ds)=>s+(ds.data[i]||0),0);if(!tot)continue;const meta=chart.getDatasetMeta(data.datasets.length-1);if(!meta.data[i])continue;ctx.fillText(tot>=1000?(tot/1000).toFixed(1)+'k':tot,meta.data[i].x,scales.y.getPixelForValue(tot)-3);}ctx.restore();}};
+function renderCharts(d){
+  const{months:ms,canals,cm,sm,ct,st,skus}=d;
+  const byC=chartView==='canal';
+  const lbl=ms.map(m=>MLBL[MONTHS.indexOf(m)]);
+  const bds=byC?canals.map(c=>({label:CANAL_LABELS[c],data:ms.map(m=>cm[c][m]||0),backgroundColor:CANAL_COLORS[c],stack:'s'})):skus.map(s=>({label:s,data:ms.map(m=>(sm[s]&&sm[s][m])||0),backgroundColor:SKU_COLORS[s],stack:'s'}));
+  if(CS)CS.destroy();CS=new Chart(document.getElementById('cs'),{type:'bar',data:{labels:lbl,datasets:bds},options:{plugins:{legend:LEG},scales:{x:{...AXIS,stacked:true},y:{...AXIS,stacked:true}},responsive:true,maintainAspectRatio:true},plugins:[stkP]});
+  const dd=byC?canals.filter(c=>ct[c]>0):skus.filter(s=>(st[s]||0)>0);
+  const dv=byC?dd.map(c=>ct[c]):dd.map(s=>st[s]||0);
+  const dc=byC?dd.map(c=>CANAL_COLORS[c]):dd.map(s=>SKU_COLORS[s]);
+  const dl=byC?dd.map(c=>CANAL_LABELS[c]):dd;
+  if(CD)CD.destroy();CD=new Chart(document.getElementById('cd'),{type:'doughnut',data:{labels:dl,datasets:[{data:dv,backgroundColor:dc,borderWidth:2,borderColor:'#fff'}]},options:{plugins:{legend:LEG},responsive:true,maintainAspectRatio:true}});
+  const fml=MONTHS.map(m=>MLBL[MONTHS.indexOf(m)]);
+  if(byC){
+    const fc={};canals.forEach(c=>{fc[c]={};MONTHS.forEach(m=>{fc[c][m]=0;});});skus.forEach(s=>canals.forEach(c=>MONTHS.forEach(m=>{fc[c][m]+=getQty(s,c,m);})));
+    if(CL)CL.destroy();CL=new Chart(document.getElementById('cl'),{type:'line',data:{labels:fml,datasets:canals.map(c=>({label:CANAL_LABELS[c],data:MONTHS.map(m=>fc[c][m]||0),borderColor:CANAL_COLORS[c],backgroundColor:CANAL_COLORS[c]+'22',tension:.3,pointRadius:3,borderWidth:2}))},options:{plugins:{legend:LEG},scales:{x:AXIS,y:AXIS},responsive:true,maintainAspectRatio:true}});
+  }else{
+    const fs={};skus.forEach(s=>{fs[s]={};MONTHS.forEach(m=>{fs[s][m]=canals.reduce((a,c)=>a+getQty(s,c,m),0);});});
+    if(CL)CL.destroy();CL=new Chart(document.getElementById('cl'),{type:'line',data:{labels:fml,datasets:skus.map(s=>({label:s,data:MONTHS.map(m=>fs[s][m]||0),borderColor:SKU_COLORS[s],backgroundColor:SKU_COLORS[s]+'22',tension:.3,pointRadius:3,borderWidth:2}))},options:{plugins:{legend:LEG},scales:{x:AXIS,y:AXIS},responsive:true,maintainAspectRatio:true}});
+  }
+  if(byC){const sc=[...canals].sort((a,b)=>(ct[b]||0)-(ct[a]||0));if(CB)CB.destroy();CB=new Chart(document.getElementById('cb'),{type:'bar',data:{labels:sc.map(c=>CANAL_LABELS[c]),datasets:[{data:sc.map(c=>ct[c]||0),backgroundColor:sc.map(c=>CANAL_COLORS[c]+'99'),borderColor:sc.map(c=>CANAL_COLORS[c]),borderWidth:1}]},options:{indexAxis:'y',plugins:{legend:{display:false}},scales:{x:AXIS,y:AXIS},responsive:true,maintainAspectRatio:true}});}
+  else{const ss=[...skus].sort((a,b)=>(st[b]||0)-(st[a]||0));if(CB)CB.destroy();CB=new Chart(document.getElementById('cb'),{type:'bar',data:{labels:ss,datasets:[{data:ss.map(s=>st[s]||0),backgroundColor:ss.map(s=>SKU_COLORS[s]+'99'),borderColor:ss.map(s=>SKU_COLORS[s]),borderWidth:1}]},options:{indexAxis:'y',plugins:{legend:{display:false}},scales:{x:AXIS,y:{ticks:{...AXIS.ticks,font:{size:9}},grid:AXIS.grid}},responsive:true,maintainAspectRatio:true}});}
+}
+loadData();
+</script>
+</body>
+</html>"""
+
+async def route_velocity_dashboard(request: Request) -> Response:
+    """GET /velocity?token=... — standalone Chrome-compatible velocity dashboard."""
+    token = request.query_params.get("token", "")
+    if not MCP_API_KEY or token != MCP_API_KEY:
+        return Response("Unauthorized — pass ?token=<MCP_API_KEY>", status_code=401)
+    return HTMLResponse(VELOCITY_DASHBOARD_HTML)
+
 routes = [
     # Public â no auth required.
     Route("/health",                            route_health),
@@ -1480,7 +1721,9 @@ routes = [
     Route("/api/velocity",  route_velocity_get,  methods=["GET"]),
     Route("/api/velocity",  route_velocity_put,  methods=["PUT"]),
 
-        # MCP server – Bearer-token guarded, for Claude Desktop / mcp-remote.
+        Route("/velocity",              route_velocity_dashboard,    methods=["GET"]),
+
+    # MCP server – Bearer-token guarded, for Claude Desktop / mcp-remote.
     Route("/mcp",          route_mcp,          methods=["GET", "POST"]),
     Route("/mcp/messages", route_mcp_messages, methods=["POST"]),
 
