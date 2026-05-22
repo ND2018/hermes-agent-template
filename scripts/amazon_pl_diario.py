@@ -482,6 +482,89 @@ def build_page(d, ts):
     return "\n".join(lines)
 
 # ── Main ──────────────────────────────────────────────────────────────────────
+
+def velocity_update_gbrain():
+    """Llegeix el JSON de velocitat de Hermes, calcula resums 30/60/90d i escriu a GBrain velocity-resum."""
+    import datetime, calendar as _cal
+    VELOCITY_URL = f"{HERMES_URL}/api/velocity"
+    MCP_URL      = f"{HERMES_URL}/mcp"
+    TOKEN        = MCP_KEY
+    CANAL_ORDER  = ["AMZ_EU","AMZ_USA","WEB_B2C","B2B","MAJORISTA_NATURITAS"]
+    CANAL_LABELS = {"AMZ_EU":"Amazon EU","AMZ_USA":"Amazon USA","WEB_B2C":"Web B2C","B2B":"B2B","MAJORISTA_NATURITAS":"Majorista Naturitas"}
+    SKU_ORDER    = ["1#1M","1#3M","1#PLUS","1#MAX","US1#1M","US1#PLUS","US1#MAX"]
+    try:
+        req = urllib.request.Request(f"{VELOCITY_URL}?token={TOKEN}", headers={"Cache-Control":"no-cache"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            d = json.loads(r.read())
+        SKU_DATA = d.get("SKU_DATA", {})
+        MONTHS   = sorted(d.get("MONTHS", []))
+        updated  = d.get("meta", {}).get("updated", str(datetime.date.today()))
+        if not MONTHS:
+            log("velocity_update_gbrain: sense dades, skip", "WARN"); return
+        lm = MONTHS[-1]
+        y, mo = int(lm[:4]), int(lm[5:7])
+        max_date = min(datetime.date(y, mo, _cal.monthrange(y, mo)[1]), datetime.date.today())
+        def gq(sku, canal, m): return SKU_DATA.get(sku,{}).get(canal,{}).get(m,0)
+        def compute(days):
+            start = max_date - datetime.timedelta(days=days-1)
+            tc, ts = {c:0 for c in CANAL_ORDER}, {s:0 for s in SKU_ORDER}
+            for m in MONTHS:
+                my,mm = int(m[:4]),int(m[5:7])
+                ms=datetime.date(my,mm,1); me=datetime.date(my,mm,_cal.monthrange(my,mm)[1])
+                if ms>max_date or me<start: continue
+                frac=(min(me,max_date)-max(ms,start)).days+1
+                avail=(me-ms).days+1
+                f=frac/avail if avail>0 else 0
+                for s in SKU_ORDER:
+                    for c in CANAL_ORDER:
+                        q=round(gq(s,c,m)*f); tc[c]+=q; ts[s]+=q
+            return tc, ts
+        w30c,w30s=compute(30); w60c,w60s=compute(60); w90c,w90s=compute(90)
+        t30,t60,t90=sum(w30c.values()),sum(w60c.values()),sum(w90c.values())
+        def tbl_c(wc,tot):
+            rows=["| Canal | Unitats | % |","|---|---:|---:|"]
+            for c in CANAL_ORDER:
+                v=wc[c]; rows.append(f"| {CANAL_LABELS[c]} | {v:,} | {v/tot*100:.0f}% |" if tot else f"| {CANAL_LABELS[c]} | {v:,} | 0% |")
+            rows.append(f"| **TOTAL** | **{tot:,}** | **100%** |"); return "\n".join(rows)
+        def tbl_s(ws):
+            rows=["| SKU | Unitats |","|---|---:|"]
+            for s in SKU_ORDER:
+                if ws[s]>0: rows.append(f"| `{s}` | {ws[s]:,} |")
+            return "\n".join(rows)
+        recent=MONTHS[-4:] if len(MONTHS)>=4 else MONTHS
+        hdr="| Canal | "+" | ".join(m[5:]+"/"+m[2:4] for m in recent)+" |"
+        sep="|---|"+"---:|"*len(recent)
+        rows=[hdr,sep]
+        for c in CANAL_ORDER:
+            row=f"| {CANAL_LABELS[c]} |"
+            for m in recent: row+=f" {sum(gq(s,c,m) for s in SKU_ORDER):,} |"
+            rows.append(row)
+        hdr2="| SKU | "+" | ".join(m[5:]+"/"+m[2:4] for m in recent)+" |"
+        rows2=[hdr2,sep]
+        for s in SKU_ORDER:
+            if sum(sum(gq(s,c,m) for c in CANAL_ORDER) for m in recent)==0: continue
+            row=f"| `{s}` |"
+            for m in recent: row+=f" {sum(gq(s,c,m) for c in CANAL_ORDER):,} |"
+            rows2.append(row)
+        content=(
+            f"# Velocity Vendes — Resum\n\n"
+            f"**Última actualització**: {updated}\n"
+            f"**Rang de dades**: {MONTHS[0]} → {MONTHS[-1]}\n\n---\n\n"
+            f"## Últims 30 dies · {t30:,} unitats\n\n{tbl_c(w30c,t30)}\n\n{tbl_s(w30s)}\n\n---\n\n"
+            f"## Últims 60 dies · {t60:,} unitats\n\n{tbl_c(w60c,t60)}\n\n---\n\n"
+            f"## Últims 90 dies · {t90:,} unitats\n\n{tbl_c(w90c,t90)}\n\n---\n\n"
+            f"## Historial mensual per canal\n\n{'\n'.join(rows)}\n\n"
+            f"## Historial mensual per SKU\n\n{'\n'.join(rows2)}\n\n"
+            f"*Actualitzat automàticament cada nit per Railway*\n"
+        )
+        mcp_body=json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"gbrain_put_page","arguments":{"slug":"velocity-resum","content":content}}}).encode()
+        mcp_req=urllib.request.Request(f"{MCP_URL}",data=mcp_body,method="POST",headers={"Content-Type":"application/json","Authorization":f"Bearer {TOKEN}"})
+        with urllib.request.urlopen(mcp_req, timeout=30) as r: r.read()
+        log(f"GBrain velocity-resum OK: {t30:,}u/30d · {t60:,}u/60d · {t90:,}u/90d")
+    except Exception as e:
+        log(f"velocity_update_gbrain ERROR: {e}", "WARN")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--date",      type=str, default=None)
@@ -540,6 +623,7 @@ def main():
 
         # ── Velocity update (reutilitza dades ja calculades, 0 downloads extra) ──
         velocity_update_amz(data["by_product"], label, "AMZ_EU")
+    velocity_update_gbrain()
 
         elapsed = (datetime.now(timezone.utc) - RUN_START).total_seconds()
         log("=" * 60)
