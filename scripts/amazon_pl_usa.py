@@ -463,11 +463,10 @@ def main():
         print("\n" + page)
     else:
         ok = gbrain_put("amazon-usa-pl-diario", page)
+
+        # ── Velocity update (reutilitza dades ja calculades, 0 downloads extra) ──
+        velocity_update_amz(data["by_product"], label, "AMZ_USA")
+
         elapsed = (datetime.now(timezone.utc) - RUN_START).total_seconds()
         log("=" * 60)
-        log(f"COMPLETADO {'OK' if ok else 'FALLO'} -- {elapsed:.0f}s")
-        log("=" * 60)
-        if not ok: sys.exit(1)
-
-if __name__ == "__main__":
-    main()
+   
