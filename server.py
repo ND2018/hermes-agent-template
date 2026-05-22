@@ -1409,6 +1409,36 @@ async def route_mcp_messages(request: Request) -> Response:
     return Response(status_code=202)
 
 
+
+# ── Velocity data endpoint (privat, autenticat) ───────────────────────────────
+VELOCITY_FILE = Path("/data/velocity-data.json")
+
+def _check_mcp_auth(request: Request) -> bool:
+    token = request.query_params.get("token", "")
+    auth  = request.headers.get("authorization", "")
+    return auth == f"Bearer {MCP_API_KEY}" or (MCP_API_KEY and token == MCP_API_KEY)
+
+async def route_velocity_get(request: Request) -> Response:
+    """GET /api/velocity  — retorna el JSON de velocitat de vendes."""
+    if not _check_mcp_auth(request):
+        return Response("Unauthorized", status_code=401)
+    if not VELOCITY_FILE.exists():
+        return JSONResponse({"error": "velocity data not found"}, status_code=404)
+    return Response(VELOCITY_FILE.read_text(encoding="utf-8"), media_type="application/json")
+
+async def route_velocity_put(request: Request) -> Response:
+    """PUT /api/velocity  — escriu el JSON de velocitat (Railway scripts)."""
+    if not _check_mcp_auth(request):
+        return Response("Unauthorized", status_code=401)
+    try:
+        body = await request.body()
+        data = json.loads(body)
+        VELOCITY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        VELOCITY_FILE.write_text(json.dumps(data, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        return JSONResponse({"ok": True, "updated": data.get("meta", {}).get("updated", "")})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
 routes = [
     # Public â no auth required.
     Route("/health",                            route_health),
@@ -1446,7 +1476,11 @@ routes = [
     WebSocketRoute("/api/ws",                   ws_proxy),
     WebSocketRoute("/api/events",               ws_proxy),
 
-    # MCP server – Bearer-token guarded, for Claude Desktop / mcp-remote.
+    # Velocity data – Bearer-token guarded (also ?token= for web_fetch).
+    Route("/api/velocity",  route_velocity_get,  methods=["GET"]),
+    Route("/api/velocity",  route_velocity_put,  methods=["PUT"]),
+
+        # MCP server – Bearer-token guarded, for Claude Desktop / mcp-remote.
     Route("/mcp",          route_mcp,          methods=["GET", "POST"]),
     Route("/mcp/messages", route_mcp_messages, methods=["POST"]),
 
@@ -1478,3 +1512,4 @@ if __name__ == "__main__":
         loop.add_signal_handler(sig, _shutdown)
 
     loop.run_until_complete(server.serve())
+
