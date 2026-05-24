@@ -622,8 +622,14 @@ def main():
         ok = gbrain_put("amazon-europa-pl-diario", page)
 
         # ── Velocity update (reutilitza dades ja calculades, 0 downloads extra) ──
-        velocity_update_amz(data["by_product"], label, "AMZ_EU")
-        velocity_update_gbrain()
+        try:
+            velocity_update_amz(data["by_product"], label, "AMZ_EU")
+        except NameError:
+            log("velocity_update_amz no implementada (skip)", "WARN")
+        try:
+            velocity_update_gbrain()
+        except Exception as ve:
+            log(f"velocity_update_gbrain error (no critic): {ve}", "WARN")
 
         elapsed = (datetime.now(timezone.utc) - RUN_START).total_seconds()
         log("=" * 60)
