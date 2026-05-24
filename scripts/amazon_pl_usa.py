@@ -479,8 +479,8 @@ def velocity_update_gbrain():
             f"## Últims 30 dies · {t30:,} unitats\n\n{tbl_c(w30c,t30)}\n\n{tbl_s(w30s)}\n\n---\n\n"
             f"## Últims 60 dies · {t60:,} unitats\n\n{tbl_c(w60c,t60)}\n\n---\n\n"
             f"## Últims 90 dies · {t90:,} unitats\n\n{tbl_c(w90c,t90)}\n\n---\n\n"
-            f"## Historial mensual per canal\n\n{'\n'.join(rows)}\n\n"
-            f"## Historial mensual per SKU\n\n{'\n'.join(rows2)}\n\n"
+            "## Historial mensual per canal\n\n" + chr(10).join(rows) + "\n\n"
+            "## Historial mensual per SKU\n\n" + chr(10).join(rows2) + "\n\n"
             f"*Actualitzat automàticament cada nit per Railway*\n"
         )
         mcp_body=json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"gbrain_put_page","arguments":{"slug":"velocity-resum","content":content}}}).encode()
@@ -549,7 +549,7 @@ def main():
 
         # ── Velocity update (reutilitza dades ja calculades, 0 downloads extra) ──
         velocity_update_amz(data["by_product"], label, "AMZ_USA")
-    velocity_update_gbrain()
+        velocity_update_gbrain()
 
         elapsed = (datetime.now(timezone.utc) - RUN_START).total_seconds()
         log("=" * 60)
