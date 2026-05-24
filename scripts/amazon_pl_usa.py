@@ -553,4 +553,50 @@ def main():
 
         elapsed = (datetime.now(timezone.utc) - RUN_START).total_seconds()
         log("=" * 60)
-   
+        log(f"SYNC COMPLETAT en {elapsed:.0f}s")
+        log("=" * 60)
+
+
+def _send_telegram_alert(msg):
+    """Helper local per alerta Telegram."""
+    try:
+        import urllib.request as _ur
+        tok  = os.environ.get("TELEGRAM_TOKEN", "")
+        chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+        if not tok or not chat:
+            return
+        body = json.dumps({"chat_id": chat, "text": msg, "parse_mode": "HTML"}).encode()
+        req = _ur.Request(
+            "https://api.telegram.org/bot" + tok + "/sendMessage",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with _ur.urlopen(req, timeout=10):
+            pass
+    except Exception:
+        pass
+
+
+if __name__ == "__main__":
+    import traceback as _tb
+    try:
+        main()
+        sys.exit(0)
+    except SystemExit:
+        sys.exit(0)
+    except BaseException as _e:
+        _trace = _tb.format_exc()
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        print("[" + ts + "] [ERROR] CRASH inesperat: " + str(_e), flush=True)
+        print(_trace, flush=True)
+        try:
+            short_tb = _trace[-500:] if len(_trace) > 500 else _trace
+            _send_telegram_alert(
+                "<b>" + __file__.split("/")[-1] + " EXCEPCIO</b>\n" +
+                "<code>" + type(_e).__name__ + ": " + str(_e)[:200] + "</code>\n\n" +
+                "<code>" + short_tb + "</code>"
+            )
+        except Exception:
+            pass
+        sys.exit(0)
