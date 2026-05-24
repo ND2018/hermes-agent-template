@@ -483,6 +483,78 @@ def build_page(d, ts):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def velocity_update_amz(by_product, label, channel):
+    """Afegeix les ventes Amazon del dia `label` (YYYY-MM-DD) al JSON velocity-data.
+
+    Idempotent: si el dia ja s'ha processat per aquest canal, fa skip.
+    Seed-aware: dies anteriors al meta.max_date inicial es consideren cobertss
+    pel seed manual (no es sumen, només es marquen com processats).
+
+    Args:
+        by_product: dict {SKU: {units, sales, profit}}
+        label: str "YYYY-MM-DD"
+        channel: "AMZ_EU" o "AMZ_USA"
+    """
+    VELOCITY_URL = f"{HERMES_URL}/api/velocity"
+    month = label[:7]
+    try:
+        # GET JSON actual
+        req = urllib.request.Request(f"{VELOCITY_URL}?token={MCP_KEY}",
+                                      headers={"Cache-Control": "no-cache"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            d = json.loads(r.read())
+        # Inicialitzar estructures
+        d.setdefault("processed_days", {})
+        d["processed_days"].setdefault(channel, [])
+        d.setdefault("MONTHS", [])
+        d.setdefault("SKU_DATA", {})
+        d.setdefault("meta", {})
+        # Idempotència 1: dia ja processat -> skip
+        if label in d["processed_days"][channel]:
+            log(f"velocity_update_amz {channel} {label}: ja processat (skip)")
+            return
+        # Idempotència 2: dia cobert pel seed inicial
+        seed_max = d["meta"].get("max_date", "")
+        is_seed_covered = (
+            label <= seed_max and not d["processed_days"][channel]
+        )
+        if is_seed_covered:
+            # Només marcar com processat, NO sumar (ja està al seed)
+            d["processed_days"][channel].append(label)
+            log(f"velocity_update_amz {channel} {label}: cobert pel seed (skip sum)")
+        else:
+            # Sumar units per SKU al mes
+            if month not in d["MONTHS"]:
+                d["MONTHS"].append(month)
+                d["MONTHS"].sort()
+            added = 0
+            for sku, info in by_product.items():
+                units = int(info.get("units", 0) or 0) if isinstance(info, dict) else 0
+                if units <= 0:
+                    continue
+                d["SKU_DATA"].setdefault(sku, {}).setdefault(channel, {})
+                prev = d["SKU_DATA"][sku][channel].get(month, 0)
+                d["SKU_DATA"][sku][channel][month] = prev + units
+                added += units
+            d["processed_days"][channel].append(label)
+            log(f"velocity_update_amz {channel} {label}: +{added} units a {month}")
+        d["processed_days"][channel].sort()
+        if label > d["meta"].get("max_date", ""):
+            d["meta"]["max_date"] = label
+        d["meta"]["updated"] = label
+        # PUT
+        body = json.dumps(d, ensure_ascii=False).encode()
+        req = urllib.request.Request(
+            f"{VELOCITY_URL}?token={MCP_KEY}",
+            data=body, method="PUT",
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            r.read()
+    except Exception as e:
+        log(f"velocity_update_amz ERROR: {e}", "WARN")
+
+
 def velocity_update_gbrain():
     """Llegeix el JSON de velocitat de Hermes, calcula resums 30/60/90d i escriu a GBrain velocity-resum."""
     import datetime, calendar as _cal
@@ -622,10 +694,7 @@ def main():
         ok = gbrain_put("amazon-europa-pl-diario", page)
 
         # ── Velocity update (reutilitza dades ja calculades, 0 downloads extra) ──
-        try:
-            velocity_update_amz(data["by_product"], label, "AMZ_EU")
-        except NameError:
-            log("velocity_update_amz no implementada (skip)", "WARN")
+        velocity_update_amz(data["by_product"], label, "AMZ_EU")
         try:
             velocity_update_gbrain()
         except Exception as ve:
