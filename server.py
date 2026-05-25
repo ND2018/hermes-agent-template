@@ -1449,6 +1449,24 @@ async def route_velocity_put(request: Request) -> Response:
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
+# ── Velocity short-URL endpoint (artifact-friendly, PIN auth) ────────────────
+VELOCITY_SHORT_PIN = "nd2018"  # simple read-only PIN, URL stays short for web_fetch
+
+async def route_velocity_vdata(request: Request) -> Response:
+    """GET /api/vdata?pin=nd2018  — endpoint curt per a artifacts (URL <= 80 chars)."""
+    _CORS = {"Access-Control-Allow-Origin": "*",
+             "Access-Control-Allow-Methods": "GET, OPTIONS",
+             "Access-Control-Allow-Headers": "Authorization, Content-Type"}
+    if request.method == "OPTIONS":
+        return Response("", headers=_CORS)
+    pin = request.query_params.get("pin", "")
+    if pin != VELOCITY_SHORT_PIN:
+        return Response("Unauthorized", status_code=401)
+    if not VELOCITY_FILE.exists():
+        return JSONResponse({"error": "velocity data not found"}, status_code=404)
+    return Response(VELOCITY_FILE.read_text(encoding="utf-8"),
+                    media_type="application/json", headers=_CORS)
+
 # ── Velocity Dashboard (Chrome-compatible, token-auth) ────────────────────────
 VELOCITY_DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="ca">
@@ -1729,6 +1747,7 @@ routes = [
     # Velocity data – Bearer-token guarded (also ?token= for web_fetch).
     Route("/api/velocity",  route_velocity_get,  methods=["GET"]),
     Route("/api/velocity",  route_velocity_put,  methods=["PUT"]),
+    Route("/api/vdata",     route_velocity_vdata, methods=["GET", "OPTIONS"]),
 
         Route("/velocity",              route_velocity_dashboard,    methods=["GET"]),
 
