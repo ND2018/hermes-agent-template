@@ -80,7 +80,7 @@ def fetch_recent_emails(account_email, password, hours=24):
         M = imaplib.IMAP4(IMAP_HOST, IMAP_PORT)
         M.starttls()
         M.login(account_email, password)
-        M.select("INBOX")
+        M.select("INBOX", readonly=True)
 
         since_date = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%d-%b-%Y")
         _, data = M.search(None, f"SINCE {since_date}")
