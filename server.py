@@ -1420,11 +1420,20 @@ def _check_mcp_auth(request: Request) -> bool:
 
 async def route_velocity_get(request: Request) -> Response:
     """GET /api/velocity  — retorna el JSON de velocitat de vendes."""
+    _CORS = {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    }
+    # Handle CORS preflight
+    if request.method == "OPTIONS":
+        return Response("", headers=_CORS)
     if not _check_mcp_auth(request):
         return Response("Unauthorized", status_code=401)
     if not VELOCITY_FILE.exists():
         return JSONResponse({"error": "velocity data not found"}, status_code=404)
-    return Response(VELOCITY_FILE.read_text(encoding="utf-8"), media_type="application/json")
+    return Response(VELOCITY_FILE.read_text(encoding="utf-8"),
+                    media_type="application/json", headers=_CORS)
 
 async def route_velocity_put(request: Request) -> Response:
     """PUT /api/velocity  — escriu el JSON de velocitat (Railway scripts)."""
