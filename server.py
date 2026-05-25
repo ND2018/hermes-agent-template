@@ -1558,8 +1558,9 @@ h1{font-size:16px;font-weight:700;margin-bottom:2px}
   </div>
 </div>
 <script>
+const PIN=new URLSearchParams(location.search).get('pin')||'';
 const TOKEN=new URLSearchParams(location.search).get('token')||'';
-const API_URL='/api/velocity?token='+encodeURIComponent(TOKEN);
+const API_URL=PIN?'/api/vdata?pin='+encodeURIComponent(PIN):'/api/velocity?token='+encodeURIComponent(TOKEN);
 const CANAL_ORDER=["WEB_B2C","B2B","MAJORISTA_NATURITAS","AMZ_EU","AMZ_USA"];
 const CANAL_LABELS={"WEB_B2C":"Web B2C","B2B":"B2B","MAJORISTA_NATURITAS":"Majorista","AMZ_EU":"Amazon EU","AMZ_USA":"Amazon USA"};
 const CANAL_COLORS={"WEB_B2C":"#6366f1","B2B":"#f59e0b","MAJORISTA_NATURITAS":"#10b981","AMZ_EU":"#3b82f6","AMZ_USA":"#ef4444"};
@@ -1589,8 +1590,10 @@ async function loadData(){
 function initDashboard(ds){
   SKU_DATA=ds.data;MONTHS=ds.months;
   MLBL=MONTHS.map(m=>{const[y,mo]=m.split('-').map(Number);return MNAMES[mo-1]+' '+String(y).slice(2);});
-  const lastM=MONTHS[MONTHS.length-1];
-  if(lastM){const[y,mo]=lastM.split('-').map(Number);MAX_DATE=new Date(y,mo-1,28);}
+  const metaUpdated=ds.updated;
+  if(metaUpdated&&/^\d{4}-\d{2}-\d{2}$/.test(metaUpdated)){MAX_DATE=new Date(metaUpdated+'T12:00:00');}
+  else{const lastM=MONTHS[MONTHS.length-1];if(lastM){const[y,mo]=lastM.split('-').map(Number);MAX_DATE=new Date(y,mo-1,28);}}
+  const _today=new Date();_today.setHours(12,0,0,0);if(MAX_DATE>_today)MAX_DATE=_today;
   document.getElementById('app').style.display='block';
   buildFilters();setPreset(182);
 }
@@ -1701,10 +1704,13 @@ loadData();
 </html>"""
 
 async def route_velocity_dashboard(request: Request) -> Response:
-    """GET /velocity?token=... — standalone Chrome-compatible velocity dashboard."""
+    """GET /velocity?token=... OR ?pin=nd2018 — standalone Chrome-compatible velocity dashboard."""
+    pin = request.query_params.get("pin", "")
     token = request.query_params.get("token", "")
+    if pin == VELOCITY_SHORT_PIN:
+        return HTMLResponse(VELOCITY_DASHBOARD_HTML)
     if not MCP_API_KEY or token != MCP_API_KEY:
-        return Response("Unauthorized — pass ?token=<MCP_API_KEY>", status_code=401)
+        return Response("Unauthorized — pass ?token=<MCP_API_KEY> or ?pin=nd2018", status_code=401)
     return HTMLResponse(VELOCITY_DASHBOARD_HTML)
 
 routes = [
