@@ -59,11 +59,41 @@ REFRESH_TOKEN = _req("AMAZON_REFRESH_TOKEN_USA")
 HERMES_URL    = (os.environ.get("HERMES_URL") or "https://hermes-agent-template-production-fb9a.up.railway.app").rstrip("/")
 MCP_KEY       = os.environ.get("MCP_KEY") or os.environ.get("MCP_API_KEY") or _req("MCP_KEY")
 
+# ── GBrain Naturdao v0.41.2.0 ─────────────────────────────────────────────────
+GBRAIN2_URL   = "https://gbrain-naturdao-production.up.railway.app"
+GBRAIN2_TOKEN = "gbrain_at_0d401522ee9bc19c2da0ff95d5ba7d7bc9e421b0479f9743e7ab691dde5011db"
+
+def _gbrain2_put_page(slug, content, timeout=30):
+    """Escriu una pagina al GBrain Naturdao v0.41.2.0 via MCP SSE."""
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "put_page", "arguments": {"slug": slug, "compiled_truth": content}}
+    }).encode()
+    req = urllib.request.Request(
+        f"{GBRAIN2_URL}/mcp",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {GBRAIN2_TOKEN}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            for raw_line in r:
+                line = raw_line.decode("utf-8").strip()
+                if line.startswith("data:"):
+                    return json.loads(line[5:])
+    except Exception as e:
+        print(f"[GBrain2] Error put_page {slug}: {e}", flush=True)
+    return None
+
 # ── Parametros USA ────────────────────────────────────────────────────────────
 # FX: USD -> EUR (actualizar si cambio >3%)
 USD_TO_EUR = 0.922
 
-# COGS en USD — calibrado vs Vendorati 2026-05-14
+# COGS en USD -- calibrado vs Vendorati 2026-05-14
 # Vendorati mfg avg: $2.65/ud | ship intl avg: $0.81/ud
 COGS_MFG_USD = {
     "1#1M":    2.32,   # Calibrado Vendorati (antes 3.03)
@@ -75,11 +105,11 @@ COGS_MFG_USD = {
 }
 COGS_DEFAULT_USD = 2.32
 
-# Shipping internacional a USA — calibrado Vendorati 2026-05-14
+# Shipping internacional a USA -- calibrado Vendorati 2026-05-14
 INTL_SHIP_USD = 0.81   # USD/ud (antes 0.55, calibrado: $229.38/282ud)
 LOCAL_SHIP_USD= 0.01   # USD/ud
 
-# Fees Amazon USA — calibradas vs Vendorati 2026-05-14
+# Fees Amazon USA -- calibradas vs Vendorati 2026-05-14
 # Referral efectivo Vendorati: 12.70% de gross sales (no 15%)
 # FBA efectivo Vendorati: $3.48/ud promedio (antes calibracion Finances API: $3.86)
 # Nota: Finances API mide settlements (+2-3 dias lag), Vendorati usa order date
@@ -96,7 +126,7 @@ FBA_DEFAULT_USD   = 3.44
 DIGITAL_RATE_USA  = 0.0     # DigitalServicesFee insignificante para suplementos USA
 VAT_RATIO_USA     = 0.0     # Sin IVA en fees para USA
 
-# PPC / Advertising — coste real de publicidad Amazon Ads
+# PPC / Advertising -- coste real de publicidad Amazon Ads
 # Se carga dinamicamente desde ads_spend_{date}.json (generado por amazon_ads_fetch.py)
 # Fallback: valor fijo calibrado Vendorati 2026-05-14 ($986.41/dia)
 PPC_DAILY_USD_DEFAULT = 986.41   # USD/dia fallback si no hay JSON de Ads
@@ -125,7 +155,7 @@ def load_ppc_from_cache(date_label):
 
 # NOTA USA vs Europa:
 # - item-price en Orders Report = Principal SIN sales tax (al revés que EU donde incluye VAT)
-# - NO hay que restar item-tax del revenue (el tax no está incluido en item-price)
+# - NO hay que restar item-tax del revenue (el tax no esta incluido en item-price)
 # - Sales tax aparece en Finances API como +Tax (cobrado al cliente) pero el seller lo remite al estado
 # - Revenue neto del seller = item-price + shipping-price + promos (sin ajuste de tax)
 
@@ -330,24 +360,19 @@ def calc_pl(rows, date_label):
                                    key=lambda x: x[1]["units"], reverse=True)),
     }
 
-# ── GBrain ────────────────────────────────────────────────────────────────────
+# ── GBrain (escriu al nou GBrain Naturdao v0.41.2.0) ─────────────────────────
 def gbrain_put(slug, content, retries=3):
-    body = json.dumps({
-        "jsonrpc":"2.0","id":1,"method":"tools/call",
-        "params":{"name":"gbrain_put_page","arguments":{"slug":slug,"content":content}}
-    }).encode()
     for attempt in range(retries):
         try:
-            req = urllib.request.Request(f"{HERMES_URL}/mcp", data=body, headers=MCP_HEADERS, method="POST")
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-                if resp.get("error"): raise RuntimeError(resp["error"])
-                log(f"GBrain <- {slug}")
+            result = _gbrain2_put_page(slug, content)
+            if result is not None:
+                log(f"GBrain2 <- {slug}")
                 return True
+            raise RuntimeError("resposta buida")
         except Exception as ex:
-            log(f"GBrain error ({attempt+1}): {ex}", "WARN")
+            log(f"GBrain2 error ({attempt+1}): {ex}", "WARN")
             time.sleep(2**attempt)
-    log(f"GBrain FALLO {slug}", "ERROR")
+    log(f"GBrain2 FALLO {slug}", "ERROR")
     return False
 
 def fmt_eur(v):
@@ -414,7 +439,7 @@ def velocity_update_amz(by_product, label, channel):
 
     Idempotent: si el dia ja s'ha processat per aquest canal, fa skip.
     Seed-aware: dies anteriors al meta.max_date inicial es consideren cobertss
-    pel seed manual (no es sumen, només es marquen com processats).
+    pel seed manual (no es sumen, nomes es marquen com processats).
 
     Args:
         by_product: dict {SKU: {units, sales, profit}}
@@ -435,17 +460,17 @@ def velocity_update_amz(by_product, label, channel):
         d.setdefault("MONTHS", [])
         d.setdefault("SKU_DATA", {})
         d.setdefault("meta", {})
-        # Idempotència 1: dia ja processat -> skip
+        # Idempotencia 1: dia ja processat -> skip
         if label in d["processed_days"][channel]:
             log(f"velocity_update_amz {channel} {label}: ja processat (skip)")
             return
-        # Idempotència 2: dia cobert pel seed inicial
+        # Idempotencia 2: dia cobert pel seed inicial
         seed_max = d["meta"].get("max_date", "")
         is_seed_covered = (
             label <= seed_max and not d["processed_days"][channel]
         )
         if is_seed_covered:
-            # Només marcar com processat, NO sumar (ja està al seed)
+            # Nomes marcar com processat, NO sumar (ja esta al seed)
             d["processed_days"][channel].append(label)
             log(f"velocity_update_amz {channel} {label}: cobert pel seed (skip sum)")
         else:
@@ -482,10 +507,9 @@ def velocity_update_amz(by_product, label, channel):
 
 
 def velocity_update_gbrain():
-    """Llegeix el JSON de velocitat de Hermes, calcula resums 30/60/90d i escriu a GBrain velocity-resum."""
+    """Llegeix el JSON de velocitat de Hermes, calcula resums 30/60/90d i escriu a GBrain2 velocity-resum."""
     import datetime, calendar as _cal
     VELOCITY_URL = f"{HERMES_URL}/api/velocity"
-    MCP_URL      = f"{HERMES_URL}/mcp"
     TOKEN        = MCP_KEY
     CANAL_ORDER  = ["AMZ_EU","AMZ_USA","WEB_B2C","B2B","MAJORISTA_NATURITAS"]
     CANAL_LABELS = {"AMZ_EU":"Amazon EU","AMZ_USA":"Amazon USA","WEB_B2C":"Web B2C","B2B":"B2B","MAJORISTA_NATURITAS":"Majorista Naturitas"}
@@ -545,20 +569,22 @@ def velocity_update_gbrain():
             for m in recent: row+=f" {sum(gq(s,c,m) for c in CANAL_ORDER):,} |"
             rows2.append(row)
         content=(
-            f"# Velocity Vendes — Resum\n\n"
-            f"**Última actualització**: {updated}\n"
-            f"**Rang de dades**: {MONTHS[0]} → {MONTHS[-1]}\n\n---\n\n"
-            f"## Últims 30 dies · {t30:,} unitats\n\n{tbl_c(w30c,t30)}\n\n{tbl_s(w30s)}\n\n---\n\n"
-            f"## Últims 60 dies · {t60:,} unitats\n\n{tbl_c(w60c,t60)}\n\n---\n\n"
-            f"## Últims 90 dies · {t90:,} unitats\n\n{tbl_c(w90c,t90)}\n\n---\n\n"
+            f"# Velocity Vendes -- Resum\n\n"
+            f"**Ultima actualitzacio**: {updated}\n"
+            f"**Rang de dades**: {MONTHS[0]} -> {MONTHS[-1]}\n\n---\n\n"
+            f"## Ultims 30 dies - {t30:,} unitats\n\n{tbl_c(w30c,t30)}\n\n{tbl_s(w30s)}\n\n---\n\n"
+            f"## Ultims 60 dies - {t60:,} unitats\n\n{tbl_c(w60c,t60)}\n\n---\n\n"
+            f"## Ultims 90 dies - {t90:,} unitats\n\n{tbl_c(w90c,t90)}\n\n---\n\n"
             "## Historial mensual per canal\n\n" + chr(10).join(rows) + "\n\n"
             "## Historial mensual per SKU\n\n" + chr(10).join(rows2) + "\n\n"
-            f"*Actualitzat automàticament cada nit per Railway*\n"
+            f"*Actualitzat automaticament cada nit per Railway*\n"
         )
-        mcp_body=json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"gbrain_put_page","arguments":{"slug":"velocity-resum","content":content}}}).encode()
-        mcp_req=urllib.request.Request(f"{MCP_URL}",data=mcp_body,method="POST",headers={"Content-Type":"application/json","Authorization":f"Bearer {TOKEN}"})
-        with urllib.request.urlopen(mcp_req, timeout=30) as r: r.read()
-        log(f"GBrain velocity-resum OK: {t30:,}u/30d · {t60:,}u/60d · {t90:,}u/90d")
+        # Escriure al nou GBrain Naturdao v0.41.2.0
+        result = _gbrain2_put_page("velocity-resum", content)
+        if result is not None:
+            log(f"GBrain2 velocity-resum OK: {t30:,}u/30d - {t60:,}u/60d - {t90:,}u/90d")
+        else:
+            log("GBrain2 velocity-resum: resposta buida (pot ser OK si SSE)", "WARN")
     except Exception as e:
         log(f"velocity_update_gbrain ERROR: {e}", "WARN")
 
@@ -574,6 +600,7 @@ def main():
     log("=" * 60)
     log("AMAZON USA P&L DIARIO  |  START")
     log(f"Hermes: {HERMES_URL}")
+    log(f"GBrain2: {GBRAIN2_URL}")
     log(f"FX: 1 USD = {USD_TO_EUR} EUR")
     log("=" * 60)
 
