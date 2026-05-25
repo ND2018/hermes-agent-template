@@ -66,8 +66,8 @@ def _req(key):
 CLIENT_ID     = _req("AMAZON_CLIENT_ID_EUROPA")
 CLIENT_SECRET = _req("AMAZON_CLIENT_SECRET_EUROPA")
 REFRESH_TOKEN = _req("AMAZON_REFRESH_TOKEN_EUROPA")
-HERMES_URL    = _req("HERMES_URL").rstrip("/")
-MCP_KEY       = _req("MCP_KEY")
+HERMES_URL    = (os.environ.get("HERMES_URL") or "https://hermes-agent-template-production-fb9a.up.railway.app").rstrip("/")
+MCP_KEY       = os.environ.get("MCP_KEY") or os.environ.get("MCP_API_KEY") or _req("MCP_KEY")
 
 # ── Parametros calibrados con Vendorati ───────────────────────────────────────
 # COGS manufacturing por SKU (EUR/unidad)
