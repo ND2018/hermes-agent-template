@@ -1,5 +1,5 @@
 """
-Hermes Agent â Railway admin server.
+Hermes Agent Ã¢ Railway admin server.
 
 Responsibilities:
         if tool_name == "gbrain_query":
@@ -16,7 +16,7 @@ Responsibilities:
             return {"jsonrpc": "2.0", "id": msg_id, "result": {"content": [{"type": "text", "text": text}], "isError": False}}
   - Admin UI / setup wizard at /setup (Starlette + Jinja, cookie-auth guarded)
   - Management API at /setup/api/* (config, status, logs, gateway, pairing)
-  - Reverse proxy at / and /* â native Hermes dashboard (hermes_cli/web_server, on 127.0.0.1:9119)
+  - Reverse proxy at / and /* Ã¢ native Hermes dashboard (hermes_cli/web_server, on 127.0.0.1:9119)
   - Managed subprocesses: `hermes gateway` (agent) and `hermes dashboard` (native UI)
   - Cookie-based session auth at /login (HMAC-signed, 7-day expiry, httponly)
 
@@ -29,7 +29,7 @@ secret is regenerated on every process start, so any ADMIN_PASSWORD change on
 Railway (which triggers a redeploy) invalidates all existing sessions.
 
 First-visit behavior: if no provider+model config exists, GET / redirects to /setup.
-Once configured, / proxies to the Hermes dashboard. A small "â Setup" widget is
+Once configured, / proxies to the Hermes dashboard. A small "Ã¢ Setup" widget is
 injected into every proxied HTML response so users can always return to the wizard.
 """
 
@@ -66,18 +66,20 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
 HERMES_HOME = os.environ.get("HERMES_HOME", str(Path.home() / ".hermes"))
 GBRAIN_HOME   = os.environ.get("GBRAIN_HOME", "/data/.gbrain")
+GBRAIN2_URL   = os.environ.get("GBRAIN2_URL", "")
+GBRAIN2_TOKEN = os.environ.get("GBRAIN2_TOKEN", "")
 ENV_FILE = Path(HERMES_HOME) / ".env"
 PAIRING_DIR = Path(HERMES_HOME) / "pairing"
 PAIRING_TTL = 3600
 
-# Native Hermes dashboard â runs on loopback, fronted by our reverse proxy.
+# Native Hermes dashboard Ã¢ runs on loopback, fronted by our reverse proxy.
 HERMES_DASHBOARD_HOST = "127.0.0.1"
 HERMES_DASHBOARD_PORT = int(os.environ.get("HERMES_DASHBOARD_PORT", "9119"))
 HERMES_DASHBOARD_URL = f"http://{HERMES_DASHBOARD_HOST}:{HERMES_DASHBOARD_PORT}"
 
 # Mirror dashboard-ref-only/auth_proxy.py: strip only `host` (httpx sets it)
 # and `transfer-encoding` (httpx recomputes it from the body). Keep everything
-# else â notably `authorization`, because the SPA uses Bearer tokens against
+# else Ã¢ notably `authorization`, because the SPA uses Bearer tokens against
 # hermes's own /api/env/reveal and OAuth endpoints, and keep `cookie` since
 # some hermes endpoints read it. Aggressive stripping was masking requests in
 # ways that produced spurious 401s.
@@ -87,11 +89,11 @@ ADMIN_USERNAME = os.environ.get("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 if not ADMIN_PASSWORD:
     ADMIN_PASSWORD = secrets.token_urlsafe(16)
-    print(f"[server] Admin credentials â username: {ADMIN_USERNAME}  password: {ADMIN_PASSWORD}", flush=True)
+    print(f"[server] Admin credentials Ã¢ username: {ADMIN_USERNAME}  password: {ADMIN_PASSWORD}", flush=True)
 else:
     print(f"[server] Admin username: {ADMIN_USERNAME}", flush=True)
 
-# ââ Env var registry ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ Env var registry Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 # (key, label, category, is_secret)
 ENV_VARS = [
     ("LLM_MODEL",               "Model",                    "model",     False),
@@ -102,7 +104,7 @@ ENV_VARS = [
     ("KIMI_API_KEY",             "Kimi",                     "provider",  True),
     ("MINIMAX_API_KEY",          "MiniMax",                  "provider",  True),
     ("HF_TOKEN",                 "Hugging Face",             "provider",  True),
-    # Added in v2026.4.23 (hermes v0.11.0). All plain API-key auth â hermes
+    # Added in v2026.4.23 (hermes v0.11.0). All plain API-key auth Ã¢ hermes
     # auto-routes by env-var presence, no extra config needed on our side.
     # OAuth-based providers (Gemini CLI, Qwen OAuth, Claude Code, Copilot)
     # are reachable via the dashboard's Keys tab and not exposed here.
@@ -155,7 +157,7 @@ CHANNEL_MAP  = {
 }
 
 
-# ââ .env helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ .env helpers Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 def read_env(path: Path) -> dict[str, str]:
     if not path.exists():
         return {}
@@ -173,11 +175,11 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def write_config_yaml(data: dict[str, str]) -> None:
-    """Write config.yaml â deep-merge template defaults with any existing user/cron-managed sections.
+    """Write config.yaml Ã¢ deep-merge template defaults with any existing user/cron-managed sections.
 
     Previously this overwrote ``$HERMES_HOME/config.yaml`` with a hardcoded template
     body on every boot, silently erasing user-managed top-level keys. The most
-    common casualty is ``mcp_servers`` â Hermes reads downstream MCP servers
+    common casualty is ``mcp_servers`` Ã¢ Hermes reads downstream MCP servers
     *only* from this file (see ``hermes_cli/mcp_config.py:_get_mcp_servers``), so
     the wipe broke ``hermes mcp add/test/list`` state across every container
     restart and required hand-restoration after each redeploy.
@@ -201,12 +203,12 @@ def write_config_yaml(data: dict[str, str]) -> None:
             if isinstance(loaded, dict):
                 existing = loaded
         except (yaml.YAMLError, OSError):
-            # Treat unparseable as absent â we'll overwrite with template defaults.
+            # Treat unparseable as absent Ã¢ we'll overwrite with template defaults.
             existing = {}
 
     merged = dict(existing)
 
-    # Deployment-managed (always authoritative â these reflect the runtime env).
+    # Deployment-managed (always authoritative Ã¢ these reflect the runtime env).
     merged_model = dict(merged.get("model") if isinstance(merged.get("model"), dict) else {})
     merged_model["default"] = model
     merged_model["provider"] = "auto"
@@ -290,7 +292,7 @@ def unmask(new: dict[str, str], existing: dict[str, str]) -> dict[str, str]:
     }
 
 
-# ââ Auth (cookie-based) âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ Auth (cookie-based) Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 # We use HMAC-signed cookies instead of HTTP Basic Auth because:
 #   1. Basic auth's per-directory protection space means browsers cache creds
 #      for /setup/* separately from /*, forcing re-prompt on navigation.
@@ -301,7 +303,7 @@ def unmask(new: dict[str, str], existing: dict[str, str]) -> dict[str, str]:
 # so both the setup UI and the proxied Hermes dashboard work with one login.
 #
 # The SECRET is regenerated on every process start. That means any ADMIN_PASSWORD
-# change via Railway â redeploy â all existing cookies invalidate â users re-login.
+# change via Railway Ã¢ redeploy Ã¢ all existing cookies invalidate Ã¢ users re-login.
 import hashlib as _hashlib
 import hmac as _hmac
 from urllib.parse import quote as _url_quote, urlparse as _urlparse
@@ -311,7 +313,7 @@ COOKIE_MAX_AGE = 7 * 86400  # 7 days
 COOKIE_SECRET = secrets.token_bytes(32)
 MCP_API_KEY = os.environ.get("MCP_API_KEY", "")  # Bearer token for mcp-remote clients
 
-# Public paths â no auth required. Everything else is behind the cookie gate.
+# Public paths Ã¢ no auth required. Everything else is behind the cookie gate.
 PUBLIC_PATHS = {"/health", "/login", "/logout"}
 
 
@@ -344,7 +346,7 @@ def _is_authenticated(request: Request) -> bool:
 
 
 def _safe_return_to(value: str) -> str:
-    """Reject open-redirect attempts â only allow same-origin relative paths."""
+    """Reject open-redirect attempts Ã¢ only allow same-origin relative paths."""
     if not value or not value.startswith("/") or value.startswith("//"):
         return "/"
     # Strip any scheme/netloc that slipped through.
@@ -375,7 +377,7 @@ def guard(request: Request) -> Response | None:
 LOGIN_PAGE_HTML = """<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hermes Agent â Sign in</title>
+<title>Hermes Agent Ã¢ Sign in</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -428,7 +430,7 @@ def _html_escape(s: str) -> str:
 
 
 async def page_login(request: Request) -> Response:
-    """GET /login â render the sign-in form."""
+    """GET /login Ã¢ render the sign-in form."""
     # Already signed in? Bounce to returnTo (or /).
     if _is_authenticated(request):
         return RedirectResponse(_safe_return_to(request.query_params.get("returnTo", "/")), status_code=302)
@@ -442,7 +444,7 @@ async def page_login(request: Request) -> Response:
 
 
 async def login_post(request: Request) -> Response:
-    """POST /login â validate creds and set the auth cookie."""
+    """POST /login Ã¢ validate creds and set the auth cookie."""
     form = await request.form()
     username = str(form.get("username", ""))
     password = str(form.get("password", ""))
@@ -465,13 +467,13 @@ async def login_post(request: Request) -> Response:
 
 
 async def logout(request: Request) -> Response:
-    """GET /logout â clear cookie and bounce to login."""
+    """GET /logout Ã¢ clear cookie and bounce to login."""
     resp = RedirectResponse("/login", status_code=302)
     resp.delete_cookie(COOKIE_NAME, path="/")
     return resp
 
 
-# ââ Gateway manager âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ Gateway manager Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 class Gateway:
     def __init__(self):
         self.proc: asyncio.subprocess.Process | None = None
@@ -492,7 +494,7 @@ class Gateway:
             env.update(read_env(ENV_FILE))
             model = env.get("LLM_MODEL", "")
             provider_key = next((env.get(k, "") for k in PROVIDER_KEYS if env.get(k)), "")
-            print(f"[gateway] model={model or 'â  NOT SET'} | provider_key={'set' if provider_key else 'â  NOT SET'}", flush=True)
+            print(f"[gateway] model={model or 'Ã¢  NOT SET'} | provider_key={'set' if provider_key else 'Ã¢  NOT SET'}", flush=True)
             # Write config.yaml so hermes picks up the model (env vars alone aren't always enough)
             write_config_yaml(read_env(ENV_FILE))
             self.proc = await asyncio.create_subprocess_exec(
@@ -550,16 +552,16 @@ gw = Gateway()
 cfg_lock = asyncio.Lock()
 
 
-# ââ Hermes dashboard subprocess âââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ Hermes dashboard subprocess Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 class Dashboard:
     """Manages the `hermes dashboard` subprocess (native Hermes web UI).
 
-    Bound to loopback only â we expose it to the public internet through our
+    Bound to loopback only Ã¢ we expose it to the public internet through our
     reverse proxy on $PORT, where edge basic auth guards every request.
     The dashboard is independent of the gateway: it reads config files
     directly and tolerates a stopped gateway.
 
-    All subprocess output is streamed to our stdout (â Railway logs) with a
+    All subprocess output is streamed to our stdout (Ã¢ Railway logs) with a
     `[dashboard]` prefix AND retained in a ring buffer for diagnostics.
     Unexpected exits are explicitly logged with their return code.
     """
@@ -580,14 +582,14 @@ class Dashboard:
                 "--no-open",
                 # --tui exposes /api/pty + /api/ws + /api/events so the
                 # dashboard's embedded Chat tab works end-to-end. Requires
-                # hermes >= v2026.4.23 â older releases exit immediately
+                # hermes >= v2026.4.23 Ã¢ older releases exit immediately
                 # with "unrecognized arguments: --tui". The Dockerfile
                 # pre-builds ui-tui/dist/ so PTY spawn is instant.
                 "--tui",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
             )
-            print(f"[dashboard] spawned pid={self.proc.pid} â {HERMES_DASHBOARD_URL}", flush=True)
+            print(f"[dashboard] spawned pid={self.proc.pid} Ã¢ {HERMES_DASHBOARD_URL}", flush=True)
             self._drain_task = asyncio.create_task(self._drain())
         except Exception as e:
             print(f"[dashboard] FAILED to spawn: {e!r}", flush=True)
@@ -605,7 +607,7 @@ class Dashboard:
         finally:
             rc = self.proc.returncode if self.proc else None
             if rc is not None and rc != 0:
-                print(f"[dashboard] EXITED with code {rc} â reverse proxy will return 503 until restart", flush=True)
+                print(f"[dashboard] EXITED with code {rc} Ã¢ reverse proxy will return 503 until restart", flush=True)
             elif rc == 0:
                 print(f"[dashboard] exited cleanly (code 0)", flush=True)
 
@@ -637,7 +639,7 @@ def get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
-# ââ Route handlers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ Route handlers Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 async def page_index(request: Request):
     if err := guard(request): return err
     return templates.TemplateResponse(request, "index.html")
@@ -727,7 +729,7 @@ async def api_config_reset(request: Request):
     return JSONResponse({"ok": True})
 
 
-# ââ Pairing âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ Pairing Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 def _pjson(path: Path) -> dict:
     try:
         return json.loads(path.read_text()) if path.exists() else {}
@@ -817,7 +819,7 @@ async def api_pairing_revoke(request: Request):
     return JSONResponse({"ok": True})
 
 
-# ââ Reverse proxy â Hermes dashboard ââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ Reverse proxy Ã¢ Hermes dashboard Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 _WIDGET_LINK_STYLE = (
     "background:rgba(20,24,31,0.92);backdrop-filter:blur(8px);"
     "border:1px solid #252d3d;border-radius:6px;padding:6px 12px;"
@@ -828,13 +830,13 @@ BACK_TO_SETUP_WIDGET = (
     '<div id="hermes-back-widget" style="position:fixed;bottom:14px;right:14px;'
     'z-index:99999;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;'
     'font-size:11px;display:flex;gap:8px;">'
-    f'<a href="/setup" style="{_WIDGET_LINK_STYLE}">â Setup</a>'
+    f'<a href="/setup" style="{_WIDGET_LINK_STYLE}">Ã¢ Setup</a>'
     f'<a href="/logout" style="{_WIDGET_LINK_STYLE}">Sign out</a>'
     '</div>'
 )
 
 DASHBOARD_UNAVAILABLE_HTML = """<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"><title>Dashboard startingâ¦</title>
+<html lang="en"><head><meta charset="UTF-8"><title>Dashboard startingÃ¢Â¦</title>
 <style>body{background:#0d0f14;color:#c9d1d9;font-family:ui-monospace,Menlo,monospace;
 display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
 .card{max-width:480px;padding:32px;border:1px solid #252d3d;border-radius:12px;
@@ -845,11 +847,11 @@ a{color:#6272ff;text-decoration:none;border:1px solid #252d3d;border-radius:6px;
 padding:7px 14px;font-size:12px;display:inline-block}
 a:hover{border-color:#6272ff}</style></head>
 <body><div class="card">
-<h1>â  Hermes dashboard unavailable</h1>
+<h1>Ã¢  Hermes dashboard unavailable</h1>
 <p>The native Hermes dashboard is not responding on port %d.<br>
 It may still be starting up, or it may have crashed.</p>
 <p>Try refreshing in a few seconds, or head back to setup.</p>
-<a href="/setup">â Back to Setup</a>
+<a href="/setup">Ã¢ Back to Setup</a>
 </div>
 <script>setTimeout(()=>location.reload(),4000);</script>
 </body></html>""" % HERMES_DASHBOARD_PORT
@@ -895,7 +897,7 @@ async def _proxy_to_dashboard(request: Request) -> Response:
             flush=True,
         )
 
-    # Strip hop-by-hop and length/encoding headers â Starlette recomputes them.
+    # Strip hop-by-hop and length/encoding headers Ã¢ Starlette recomputes them.
     resp_headers = {
         k: v for k, v in upstream.headers.items()
         if k.lower() not in HOP_BY_HOP
@@ -905,7 +907,7 @@ async def _proxy_to_dashboard(request: Request) -> Response:
     content = upstream.content
     content_type = upstream.headers.get("content-type", "").lower()
 
-    # Inject the "â Setup" widget into HTML pages so users can always return.
+    # Inject the "Ã¢ Setup" widget into HTML pages so users can always return.
     if "text/html" in content_type and b"</body>" in content:
         try:
             text = content.decode("utf-8", errors="replace")
@@ -924,9 +926,9 @@ async def _proxy_to_dashboard(request: Request) -> Response:
 async def route_root(request: Request) -> Response:
     """GET /: first-visit smart redirect, otherwise proxy to the dashboard.
 
-    - Unconfigured + bare GET `/` â bounce to `/setup` so new users land on
+    - Unconfigured + bare GET `/` Ã¢ bounce to `/setup` so new users land on
       the wizard instead of a half-empty dashboard.
-    - Sidebar / in-app links pass `?force=1` to opt out of that redirect â
+    - Sidebar / in-app links pass `?force=1` to opt out of that redirect Ã¢
       users who explicitly want the dashboard (e.g. to set providers via
       the Keys tab) can still reach it without saving config first.
     - Non-GET (SPA API calls, etc.) always proxy through.
@@ -946,22 +948,22 @@ async def route_proxy(request: Request) -> Response:
 
 
 async def route_setup_404(request: Request) -> Response:
-    """Typos under /setup/* should 404 here â not fall through to the proxy."""
+    """Typos under /setup/* should 404 here Ã¢ not fall through to the proxy."""
     if err := guard(request): return err
     return Response("Not Found", status_code=404, media_type="text/plain")
 
 
-# ââ App lifecycle âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ App lifecycle Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 async def auto_start():
     if is_config_complete():
         asyncio.create_task(gw.start())
     else:
-        print("[server] Config incomplete â gateway not started. Configure provider + model in the admin UI.", flush=True)
+        print("[server] Config incomplete Ã¢ gateway not started. Configure provider + model in the admin UI.", flush=True)
 
 
 @asynccontextmanager
 async def lifespan(app):
-    # Dashboard runs always â it's the user-facing UI after setup is done,
+    # Dashboard runs always Ã¢ it's the user-facing UI after setup is done,
     # and it's independent of gateway state.
     asyncio.create_task(dash.start())
     asyncio.create_task(amazon_scheduler.start())
@@ -980,16 +982,16 @@ async def lifespan(app):
             _http_client = None
 
 
-# ââ WebSocket reverse proxy ââââââââââââââââââââââââââââââââââââââââââââââââââ
+# Ã¢Ã¢ WebSocket reverse proxy Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢Ã¢
 # The hermes dashboard exposes 4 WebSocket endpoints when started with --tui.
 # Three are opened by the browser SPA and need to flow through our reverse
 # proxy; the fourth (/api/pub) is opened only by the PTY child against
-# loopback and is intentionally NOT proxied â exposing it would let an
+# loopback and is intentionally NOT proxied Ã¢ exposing it would let an
 # authed user spam events into channels.
 #
-#   /api/pty     binary stream â embedded TUI keystrokes/output
-#   /api/ws      JSON-RPC      â gateway sidecar driving Chat metadata
-#   /api/events  text frames   â dashboard subscriber for /api/pub fan-out
+#   /api/pty     binary stream Ã¢ embedded TUI keystrokes/output
+#   /api/ws      JSON-RPC      Ã¢ gateway sidecar driving Chat metadata
+#   /api/events  text frames   Ã¢ dashboard subscriber for /api/pub fan-out
 #
 # Auth model (matches the HTTP proxy):
 #   * Edge: our HMAC cookie via _is_authenticated. WebSocket inherits .cookies
@@ -1004,7 +1006,7 @@ async def _ws_pump_client_to_upstream(
     client: WebSocket,
     upstream: websockets.WebSocketClientProtocol,
 ) -> None:
-    """Forward client â upstream until the client side disconnects.
+    """Forward client Ã¢ upstream until the client side disconnects.
 
     Handles both binary (PTY bytes) and text (JSON-RPC) frames.
     """
@@ -1023,7 +1025,7 @@ async def _ws_pump_client_to_upstream(
     except (WebSocketDisconnect, websockets.exceptions.ConnectionClosed):
         return
     except Exception as e:
-        print(f"[ws-proxy] clientâupstream error on {client.url.path}: {e!r}", flush=True)
+        print(f"[ws-proxy] clientÃ¢upstream error on {client.url.path}: {e!r}", flush=True)
         return
 
 
@@ -1031,7 +1033,7 @@ async def _ws_pump_upstream_to_client(
     upstream: websockets.WebSocketClientProtocol,
     client: WebSocket,
 ) -> None:
-    """Forward upstream â client until upstream closes."""
+    """Forward upstream Ã¢ client until upstream closes."""
     try:
         async for msg in upstream:
             if isinstance(msg, bytes):
@@ -1041,20 +1043,20 @@ async def _ws_pump_upstream_to_client(
     except (websockets.exceptions.ConnectionClosed, WebSocketDisconnect):
         return
     except Exception as e:
-        print(f"[ws-proxy] upstreamâclient error on {client.url.path}: {e!r}", flush=True)
+        print(f"[ws-proxy] upstreamÃ¢client error on {client.url.path}: {e!r}", flush=True)
         return
 
 
 async def ws_proxy(websocket: WebSocket) -> None:
-    """Reverse-proxy a single WebSocket from browser â hermes dashboard.
+    """Reverse-proxy a single WebSocket from browser Ã¢ hermes dashboard.
 
     Order matters: connect upstream BEFORE accepting the client. If hermes
     is wedged or rejects the upgrade, we close the client with a meaningful
     code instead of accepting and then dropping silently.
 
     Connection lifecycle:
-      1. Verify edge cookie auth â 4401 close on failure
-      2. Open upstream WS with bounded open_timeout â 1011 on failure
+      1. Verify edge cookie auth Ã¢ 4401 close on failure
+      2. Open upstream WS with bounded open_timeout Ã¢ 1011 on failure
       3. Accept client
       4. Spawn two pump tasks (bidirectional byte forwarding)
       5. When either direction ends (client navigates away, upstream PTY
@@ -1062,7 +1064,7 @@ async def ws_proxy(websocket: WebSocket) -> None:
     """
     # 1. Edge auth.
     if not _is_authenticated(websocket):
-        # Close before accept â browser sees the handshake fail (expected
+        # Close before accept Ã¢ browser sees the handshake fail (expected
         # for unauthenticated calls).
         await websocket.close(code=4401)
         return
@@ -1079,7 +1081,7 @@ async def ws_proxy(websocket: WebSocket) -> None:
         upstream = await websockets.connect(
             upstream_url,
             open_timeout=5,
-            # Don't forward client cookies/headers â hermes WS auth is
+            # Don't forward client cookies/headers Ã¢ hermes WS auth is
             # purely token-based via the URL, and forwarding random
             # headers risks future upstream surprises.
         )
@@ -1091,7 +1093,7 @@ async def ws_proxy(websocket: WebSocket) -> None:
         await websocket.close(code=1011)
         return
 
-    # 3. Both sides ready â accept and start pumping.
+    # 3. Both sides ready Ã¢ accept and start pumping.
     await websocket.accept()
 
     pump_in = asyncio.create_task(_ws_pump_client_to_upstream(websocket, upstream))
@@ -1126,12 +1128,12 @@ async def ws_proxy(websocket: WebSocket) -> None:
 ANY_METHOD = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]
 
 
-# ── MCP server (Bearer-token guarded) ────────────────────────────────────────
-# POST /mcp  → Streamable HTTP transport (mcp-remote http-first strategy).
-# GET  /mcp  → SSE transport (mcp-remote sse-only fallback).
-# POST /mcp/messages → message channel for SSE sessions.
+# ââ MCP server (Bearer-token guarded) ââââââââââââââââââââââââââââââââââââââââ
+# POST /mcp  â Streamable HTTP transport (mcp-remote http-first strategy).
+# GET  /mcp  â SSE transport (mcp-remote sse-only fallback).
+# POST /mcp/messages â message channel for SSE sessions.
 # Auth: Authorization: Bearer <MCP_API_KEY>  (set in Railway env vars).
-# Tool: hermes_chat(message) → runs `hermes -z <message>` (oneshot CLI mode).
+# Tool: hermes_chat(message) â runs `hermes -z <message>` (oneshot CLI mode).
 
 _MCP_SERVER_INFO      = {"name": "hermes-agent", "version": "1.0.0"}
 _MCP_PROTOCOL_VERSION = "2024-11-05"
@@ -1244,8 +1246,70 @@ async def _call_hermes(message: str) -> str:
 
 
 
+
+async def _call_gbrain2_mcp(
+    action: str, slug: str = "", question: str = "", content_data: str = ""
+) -> str:
+    """Call GBrain2 (Railway) via MCP HTTP/SSE. Uses only stdlib."""
+    import re as _re, json as _json, urllib.request as _urlreq, asyncio as _asyncio
+
+    _tool_map = {
+        "query":  ("query",    {"query": question}),
+        "search": ("query",    {"query": question}),
+        "get":    ("get_page", {"slug": slug}),
+        "put":    ("put_page", {
+            "slug":    slug,
+            "content": content_data,
+            "title":   slug.replace("-", " ").title(),
+        }),
+    }
+    if action not in _tool_map:
+        return f"error: unknown gbrain action '{action}'"
+
+    _tool_name, _tool_args = _tool_map[action]
+    _payload = _json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params":  {"name": _tool_name, "arguments": _tool_args},
+    }).encode()
+
+    def _do_req():
+        _req = _urlreq.Request(
+            f"{GBRAIN2_URL}/mcp",
+            data=_payload,
+            headers={
+                "Authorization": f"Bearer {GBRAIN2_TOKEN}",
+                "Content-Type":  "application/json",
+                "Accept":        "application/json, text/event-stream",
+            },
+            method="POST",
+        )
+        try:
+            with _urlreq.urlopen(_req, timeout=30) as _resp:
+                return _resp.read().decode()
+        except Exception as _e:
+            return f"error: {_e}"
+
+    _text = await _asyncio.get_event_loop().run_in_executor(None, _do_req)
+    _m = _re.search(r"^data: (.+)$", _text, _re.MULTILINE)
+    if not _m:
+        return f"error: unexpected GBrain2 response: {_text[:300]}"
+    _data = _json.loads(_m.group(1))
+    if _data.get("result", {}).get("isError"):
+        return "error: " + _data["result"]["content"][0]["text"]
+    return _data["result"]["content"][0]["text"]
+
+
 async def _call_gbrain(args: list, stdin_data: str | None = None) -> str:
-    """Run a gbrain CLI command and return stdout."""
+    """Run a gbrain CLI command. Routes to GBrain2 HTTP API when configured."""
+    if GBRAIN2_URL and GBRAIN2_TOKEN:
+        _action   = args[0] if args else "query"
+        _slug_q   = args[1] if len(args) > 1 else ""
+        return await _call_gbrain2_mcp(
+            _action,
+            slug=_slug_q,
+            question=_slug_q,
+            content_data=stdin_data or "",
+        )
     try:
         env = {**os.environ, "GBRAIN_HOME": GBRAIN_HOME, "PATH": "/root/.bun/bin:" + os.environ.get("PATH", "")}
         proc = await asyncio.create_subprocess_exec(
@@ -1362,7 +1426,7 @@ async def route_mcp(request: Request) -> Response:
             return Response(status_code=204)
         return _mcp_respond(resp)
 
-    # GET → SSE transport
+    # GET â SSE transport
     import json as _json
     session_id = secrets.token_hex(16)
     queue: asyncio.Queue = asyncio.Queue()
@@ -1410,7 +1474,7 @@ async def route_mcp_messages(request: Request) -> Response:
 
 
 
-# ── Velocity data endpoint (privat, autenticat) ───────────────────────────────
+# ââ Velocity data endpoint (privat, autenticat) âââââââââââââââââââââââââââââââ
 VELOCITY_FILE = Path("/data/velocity-data.json")
 
 def _check_mcp_auth(request: Request) -> bool:
@@ -1419,7 +1483,7 @@ def _check_mcp_auth(request: Request) -> bool:
     return auth == f"Bearer {MCP_API_KEY}" or (MCP_API_KEY and token == MCP_API_KEY)
 
 async def route_velocity_get(request: Request) -> Response:
-    """GET /api/velocity  — retorna el JSON de velocitat de vendes."""
+    """GET /api/velocity  â retorna el JSON de velocitat de vendes."""
     _CORS = {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
@@ -1436,7 +1500,7 @@ async def route_velocity_get(request: Request) -> Response:
                     media_type="application/json", headers=_CORS)
 
 async def route_velocity_put(request: Request) -> Response:
-    """PUT /api/velocity  — escriu el JSON de velocitat (Railway scripts)."""
+    """PUT /api/velocity  â escriu el JSON de velocitat (Railway scripts)."""
     if not _check_mcp_auth(request):
         return Response("Unauthorized", status_code=401)
     try:
@@ -1449,11 +1513,11 @@ async def route_velocity_put(request: Request) -> Response:
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
-# ── Velocity short-URL endpoint (artifact-friendly, PIN auth) ────────────────
+# ââ Velocity short-URL endpoint (artifact-friendly, PIN auth) ââââââââââââââââ
 VELOCITY_SHORT_PIN = "nd2018"  # simple read-only PIN, URL stays short for web_fetch
 
 async def route_velocity_vdata(request: Request) -> Response:
-    """GET /api/vdata?pin=nd2018  — endpoint curt per a artifacts (URL <= 80 chars)."""
+    """GET /api/vdata?pin=nd2018  â endpoint curt per a artifacts (URL <= 80 chars)."""
     _CORS = {"Access-Control-Allow-Origin": "*",
              "Access-Control-Allow-Methods": "GET, OPTIONS",
              "Access-Control-Allow-Headers": "Authorization, Content-Type"}
@@ -1467,13 +1531,13 @@ async def route_velocity_vdata(request: Request) -> Response:
     return Response(VELOCITY_FILE.read_text(encoding="utf-8"),
                     media_type="application/json", headers=_CORS)
 
-# ── Velocity Dashboard (Chrome-compatible, token-auth) ────────────────────────
+# ââ Velocity Dashboard (Chrome-compatible, token-auth) ââââââââââââââââââââââââ
 VELOCITY_DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="ca">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Velocitat Vendes — Naturdao</title>
+<title>Velocitat Vendes â Naturdao</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" crossorigin="anonymous"></script>
 <style>
 :root{color-scheme:light}
@@ -1522,8 +1586,8 @@ h1{font-size:16px;font-weight:700;margin-bottom:2px}
 </style>
 </head>
 <body>
-<h1>📈 Velocitat Vendes per SKU — Naturdao</h1>
-<p class="sub">Dades: Hermes privat · Actualitzat cada nit automàticament</p>
+<h1>ð Velocitat Vendes per SKU â Naturdao</h1>
+<p class="sub">Dades: Hermes privat Â· Actualitzat cada nit automÃ ticament</p>
 <div id="status" class="status loading"><span class="spinner"></span> Carregant...</div>
 <div id="app" style="display:none">
   <div class="filters">
@@ -1544,7 +1608,7 @@ h1{font-size:16px;font-weight:700;margin-bottom:2px}
   <div class="sku-row" id="skus"></div>
   <div class="mkt-row" id="markets"></div>
   <div class="view-tabs">
-    <span style="font-size:10px;color:#94a3b8">Gràfics per:</span>
+    <span style="font-size:10px;color:#94a3b8">GrÃ fics per:</span>
     <button class="vtab active" onclick="setView('canal')">Canal</button>
     <button class="vtab" onclick="setView('sku')">Producte</button>
   </div>
@@ -1553,7 +1617,7 @@ h1{font-size:16px;font-weight:700;margin-bottom:2px}
     <div class="cc"><h2>Mix</h2><div class="donut-wrap"><canvas id="cd"></canvas></div></div>
   </div>
   <div class="chart-row">
-    <div class="cc"><h2>Tendència</h2><canvas id="cl"></canvas></div>
+    <div class="cc"><h2>TendÃ¨ncia</h2><canvas id="cl"></canvas></div>
     <div class="cc"><h2>Ranking</h2><canvas id="cb"></canvas></div>
   </div>
 </div>
@@ -1581,10 +1645,10 @@ async function loadData(){
     if(!dataset.months.length)throw new Error('Sense dades');
     initDashboard(dataset);
     document.getElementById('status').className='status ok';
-    document.getElementById('status').textContent='✅ Dades del '+dataset.updated;
+    document.getElementById('status').textContent='â Dades del '+dataset.updated;
   }catch(err){
     document.getElementById('status').className='status error';
-    document.getElementById('status').textContent='❌ '+err.message;
+    document.getElementById('status').textContent='â '+err.message;
   }
 }
 function initDashboard(ds){
@@ -1640,7 +1704,7 @@ function setPreset(days){
   document.querySelectorAll('.pbtn').forEach(b=>b.classList.toggle('active',b.textContent===PLBL[days]));
   const e=new Date(MAX_DATE),s=new Date(MAX_DATE);s.setDate(s.getDate()-days+1);
   const mn=d=>d.getDate()+' '+MNAMES[d.getMonth()]+(s.getFullYear()!==e.getFullYear()?' '+String(d.getFullYear()).slice(2):'');
-  document.getElementById('period-lbl').textContent=mn(s)+' → '+mn(e);
+  document.getElementById('period-lbl').textContent=mn(s)+' â '+mn(e);
   update();
 }
 function setView(v){chartView=v;document.querySelectorAll('.vtab').forEach(b=>b.classList.toggle('active',b.textContent===(v==='canal'?'Canal':'Producte')));const d=computePreset(activePreset);renderCharts(d);}
@@ -1654,8 +1718,8 @@ function renderKPIs(d){
     {l:'Total',v:grand.toLocaleString('ca'),s:pd+' dies',bc:''},
     {l:'Mitjana/mes',v:rate(grand).toLocaleString('ca'),s:'u/mes',bc:''},
     ...canals.map(c=>({l:CANAL_LABELS[c],v:ct[c].toLocaleString('ca'),s:rate(ct[c]).toLocaleString('ca')+' u/mes',bc:CANAL_COLORS[c]})),
-    {l:'🇪🇺 EU',v:eu.toLocaleString('ca'),s:rate(eu).toLocaleString('ca')+' u/mes',bc:'#3b82f6'},
-    {l:'🇺🇸 USA',v:usa.toLocaleString('ca'),s:rate(usa).toLocaleString('ca')+' u/mes',bc:'#ef4444'},
+    {l:'ðªðº EU',v:eu.toLocaleString('ca'),s:rate(eu).toLocaleString('ca')+' u/mes',bc:'#3b82f6'},
+    {l:'ðºð¸ USA',v:usa.toLocaleString('ca'),s:rate(usa).toLocaleString('ca')+' u/mes',bc:'#ef4444'},
   ];
   document.getElementById('kpis').innerHTML=cards.map(c=>`<div class="kc" style="${c.bc?'border-left:3px solid '+c.bc:''}"><div class="kl" style="${c.bc?'color:'+c.bc:''}">${c.l}</div><div class="kv">${c.v}</div><div class="ks">${c.s}</div></div>`).join('');
 }
@@ -1671,7 +1735,7 @@ function renderMarkets(d){
   const rate=v=>pd?Math.round(v/pd*30):Math.round(v/Math.max(n,1));
   const eu=EU_SKUS.filter(s=>skus.includes(s)).reduce((a,s)=>a+(st[s]||0),0);
   const usa=USA_SKUS.filter(s=>skus.includes(s)).reduce((a,s)=>a+(st[s]||0),0);
-  document.getElementById('markets').innerHTML=`<div class="mc" style="border-left:3px solid #3b82f6"><div class="ml" style="color:#3b82f6">🇪🇺 Europa</div><div class="mv">${eu.toLocaleString('ca')}</div><div class="ms">${rate(eu).toLocaleString('ca')} u/mes</div></div><div class="mc" style="border-left:3px solid #ef4444"><div class="ml" style="color:#ef4444">🇺🇸 USA</div><div class="mv">${usa.toLocaleString('ca')}</div><div class="ms">${rate(usa).toLocaleString('ca')} u/mes</div></div>`;
+  document.getElementById('markets').innerHTML=`<div class="mc" style="border-left:3px solid #3b82f6"><div class="ml" style="color:#3b82f6">ðªðº Europa</div><div class="mv">${eu.toLocaleString('ca')}</div><div class="ms">${rate(eu).toLocaleString('ca')} u/mes</div></div><div class="mc" style="border-left:3px solid #ef4444"><div class="ml" style="color:#ef4444">ðºð¸ USA</div><div class="mv">${usa.toLocaleString('ca')}</div><div class="ms">${rate(usa).toLocaleString('ca')} u/mes</div></div>`;
 }
 const LEG={position:'bottom',labels:{color:'#64748b',font:{size:10},boxWidth:10}};
 const AXIS={ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'#f1f5f9'}};
@@ -1704,17 +1768,17 @@ loadData();
 </html>"""
 
 async def route_velocity_dashboard(request: Request) -> Response:
-    """GET /velocity?token=... OR ?pin=nd2018 — standalone Chrome-compatible velocity dashboard."""
+    """GET /velocity?token=... OR ?pin=nd2018 â standalone Chrome-compatible velocity dashboard."""
     pin = request.query_params.get("pin", "")
     token = request.query_params.get("token", "")
     if pin == VELOCITY_SHORT_PIN:
         return HTMLResponse(VELOCITY_DASHBOARD_HTML)
     if not MCP_API_KEY or token != MCP_API_KEY:
-        return Response("Unauthorized — pass ?token=<MCP_API_KEY> or ?pin=nd2018", status_code=401)
+        return Response("Unauthorized â pass ?token=<MCP_API_KEY> or ?pin=nd2018", status_code=401)
     return HTMLResponse(VELOCITY_DASHBOARD_HTML)
 
 routes = [
-    # Public â no auth required.
+    # Public Ã¢ no auth required.
     Route("/health",                            route_health),
     Route("/login",                             page_login,          methods=["GET"]),
     Route("/login",                             login_post,          methods=["POST"]),
@@ -1737,27 +1801,27 @@ routes = [
     Route("/setup/api/pairing/approved",        api_pairing_approved),
     Route("/setup/api/pairing/revoke",          api_pairing_revoke,  methods=["POST"]),
 
-    # /setup/* typos return a real 404 â not a silent proxy fallthrough.
+    # /setup/* typos return a real 404 Ã¢ not a silent proxy fallthrough.
     Route("/setup/{path:path}",                 route_setup_404,     methods=ANY_METHOD),
 
     # Reverse-proxy hermes's dashboard WebSockets (Chat tab + sidecar).
     # WebSocketRoute is matched independently of HTTP routes, so order
     # relative to the catch-all HTTP `Route("/{path:path}", ...)` below
-    # doesn't matter â but listing them as a group keeps the surface
+    # doesn't matter Ã¢ but listing them as a group keeps the surface
     # area auditable. Only paths in PROXIED_WS_PATHS are forwarded;
     # /api/pub is intentionally omitted.
     WebSocketRoute("/api/pty",                  ws_proxy),
     WebSocketRoute("/api/ws",                   ws_proxy),
     WebSocketRoute("/api/events",               ws_proxy),
 
-    # Velocity data – Bearer-token guarded (also ?token= for web_fetch).
+    # Velocity data â Bearer-token guarded (also ?token= for web_fetch).
     Route("/api/velocity",  route_velocity_get,  methods=["GET"]),
     Route("/api/velocity",  route_velocity_put,  methods=["PUT"]),
     Route("/api/vdata",     route_velocity_vdata, methods=["GET", "OPTIONS"]),
 
         Route("/velocity",              route_velocity_dashboard,    methods=["GET"]),
 
-    # MCP server – Bearer-token guarded, for Claude Desktop / mcp-remote.
+    # MCP server â Bearer-token guarded, for Claude Desktop / mcp-remote.
     Route("/mcp",          route_mcp,          methods=["GET", "POST"]),
     Route("/mcp/messages", route_mcp_messages, methods=["POST"]),
 
@@ -1768,7 +1832,7 @@ routes = [
     Route("/{path:path}",                       route_proxy,         methods=ANY_METHOD),
 ]
 
-# No middleware â auth is enforced per-handler via guard(). This keeps /health
+# No middleware Ã¢ auth is enforced per-handler via guard(). This keeps /health
 # and /login truly unauthenticated without middleware gymnastics.
 app = Starlette(routes=routes, lifespan=lifespan)
 
