@@ -67,7 +67,7 @@ def _gbrain2_put_page(slug, content, timeout=30):
     """Escriu una pagina al GBrain Naturdao v0.41.2.0 via MCP SSE."""
     body = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "put_page", "arguments": {"slug": slug, "compiled_truth": content}}
+        "params": {"name": "put_page", "arguments": {"slug": slug, "content": content}}
     }).encode()
     req = urllib.request.Request(
         f"{GBRAIN2_URL}/mcp",
