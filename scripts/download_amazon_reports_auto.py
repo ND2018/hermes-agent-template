@@ -417,15 +417,25 @@ def main():
         log(f"  {market:30} {m['orders']:4} pedidos | {m['currency']}{m['revenue']:,.2f}")
     log("-" * 60)
 
-    # 6. Subir a GBrain
+    # 6. Subir a GBrain — escribir a AMBOS slugs
     if args.no_gbrain:
         log("--no-gbrain: mostrando página pero no subiendo")
         print("\n" + page)
     else:
-        ok = gbrain_put("amazon-europa-ventas", page)
+        # Slug principal (siempre actualizado con datos de ayer)
+        slug_main = "amazon-europa-ventas"
+        # Slug fechado (histórico diario)
+        slug_dated = f"amazon-ventes/{label}"
+
+        ok_main  = gbrain_put(slug_main, page)
+        ok_dated = gbrain_put(slug_dated, page)
+
+        ok = ok_main and ok_dated
         elapsed = (datetime.now(timezone.utc) - RUN_START).total_seconds()
         log("=" * 60)
-        log(f"SYNC {'✓ COMPLETADO' if ok else '✗ FALLIDO'} — {elapsed:.0f}s")
+        log(f"SYNC {'✓ COMPLETADO' if ok else '✗ FALLO PARCIAL'} — {elapsed:.0f}s")
+        log(f"  → {slug_main}:      {'✓' if ok_main else '✗'}")
+        log(f"  → {slug_dated}: {'✓' if ok_dated else '✗'}")
         log("=" * 60)
         if not ok:
             sys.exit(1)
