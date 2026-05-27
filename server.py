@@ -1526,7 +1526,10 @@ async def route_velocity_put(request: Request) -> Response:
 VELOCITY_SHORT_PIN = "nd2018"  # simple read-only PIN, URL stays short for web_fetch
 
 async def route_velocity_vdata(request: Request) -> Response:
-    """GET /api/vdata?pin=nd2018  ÃÂ¢ÃÂÃÂ endpoint curt per a artifacts (URL <= 80 chars)."""
+    """GET /api/vdata?pin=nd2018  — endpoint curt per a artifacts (URL <= 80 chars).
+
+    Llegeix les dades de GBrain2 (slug: velocity-data) en comptes del fitxer local.
+    """
     _CORS = {"Access-Control-Allow-Origin": "*",
              "Access-Control-Allow-Methods": "GET, OPTIONS",
              "Access-Control-Allow-Headers": "Authorization, Content-Type"}
@@ -1535,10 +1538,61 @@ async def route_velocity_vdata(request: Request) -> Response:
     pin = request.query_params.get("pin", "")
     if pin != VELOCITY_SHORT_PIN:
         return Response("Unauthorized", status_code=401)
-    if not VELOCITY_FILE.exists():
-        return JSONResponse({"error": "velocity data not found"}, status_code=404)
-    return Response(VELOCITY_FILE.read_text(encoding="utf-8"),
-                    media_type="application/json", headers=_CORS)
+    # Llegir de GBrain2 via HTTP directe
+    GBRAIN2_URL = os.environ.get("GBRAIN2_URL", "https://gbrain-naturdao-production.up.railway.app")
+    GBRAIN2_TOKEN = os.environ.get("GBRAIN2_TOKEN", "")
+    if not GBRAIN2_TOKEN:
+        return JSONResponse({"error": "GBRAIN2_TOKEN not configured"}, status_code=500)
+    try:
+        async with httpx.AsyncClient(verify=False, timeout=15) as client:
+            mcp_body = {
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "get_page", "arguments": {"slug": "velocity-data"}}
+            }
+            resp = await client.post(
+                f"{GBRAIN2_URL}/mcp",
+                json=mcp_body,
+                headers={
+                    "Authorization": f"Bearer {GBRAIN2_TOKEN}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                }
+            )
+            if resp.status_code != 200:
+                return JSONResponse({"error": f"GBrain2 HTTP {resp.status_code}"}, status_code=502)
+            # Parsejar resposta SSE
+            raw = resp.text
+            for line in raw.splitlines():
+                line = line.strip()
+                if line.startswith("data:"):
+                    gr = json.loads(line[5:])
+                    if "result" in gr:
+                        for c in gr["result"].get("content", []):
+                            if isinstance(c, dict) and c.get("type") == "text":
+                                text = c["text"]
+                                import re
+                                m = re.search(r'```json\n(.+?)\n```', text, re.DOTALL)
+                                if m:
+                                    data = json.loads(m.group(1))
+                                    return Response(
+                                        json.dumps(data, ensure_ascii=False),
+                                        media_type="application/json", headers=_CORS
+                                    )
+                                elif text.startswith("{"):
+                                    data = json.loads(text)
+                                    return Response(
+                                        json.dumps(data, ensure_ascii=False),
+                                        media_type="application/json", headers=_CORS
+                                    )
+            return JSONResponse({"error": "no data found in GBrain2"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+# Fallback: si GBrain2 no respon, intentar fitxer local
+    if VELOCITY_FILE.exists():
+        return Response(VELOCITY_FILE.read_text(encoding="utf-8"),
+                        media_type="application/json", headers=_CORS)
+    return JSONResponse({"error": "velocity data not found"}, status_code=404)
 
 # ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ Velocity Dashboard (Chrome-compatible, token-auth) ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
 VELOCITY_DASHBOARD_HTML = """<!DOCTYPE html>

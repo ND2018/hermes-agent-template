@@ -509,25 +509,64 @@ def build_page(d, ts):
 # ── Main ───────────────────────────────────────────────────────────────────────────────────────
 
 def velocity_update_amz(by_product, label, channel):
-    """Afegeix les ventes Amazon del dia `label` (YYYY-MM-DD) al JSON velocity-data.
+    """Afegeix les ventes Amazon del dia `label` (YYYY-MM-DD) a GBrain2 velocity-data.
 
     Idempotent: si el dia ja s'ha processat per aquest canal, fa skip.
-    Seed-aware: dies anteriors al meta.max_date inicial es consideren cobertss
+    Seed-aware: dies anteriors al meta.max_date inicial es consideren coberts
     pel seed manual (no es sumen, nomes es marquen com processats).
+
+    Ara escriu DIRECTAMENT a GBrain2 (ja no al JSON de Hermes /api/velocity).
 
     Args:
         by_product: dict {SKU: {units, sales, profit}}
         label: str "YYYY-MM-DD"
         channel: "AMZ_EU" o "AMZ_USA"
     """
-    VELOCITY_URL = f"{HERMES_URL}/api/velocity"
     month = label[:7]
     try:
-        # GET JSON actual
-        req = urllib.request.Request(f"{VELOCITY_URL}?token={MCP_KEY}",
-                                      headers={"Cache-Control": "no-cache"})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            d = json.loads(r.read())
+        # Llegir JSON actual des de GBrain2 (slug: velocity-data)
+        result = _gbrain2_put_page("velocity-data", json.dumps({"__ping__": True}))
+        d = {}
+        if result and "result" in result:
+            # get_page via GBrain2 MCP
+            get_body = json.dumps({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "get_page", "arguments": {"slug": "velocity-data"}}
+            }).encode()
+            get_req = urllib.request.Request(
+                f"{GBRAIN2_URL}/mcp",
+                data=get_body,
+                headers={
+                    "Authorization": f"Bearer {GBRAIN2_TOKEN}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                },
+                method="POST"
+            )
+            try:
+                with urllib.request.urlopen(get_req, timeout=20) as r:
+                    for raw_line in r:
+                        line = raw_line.decode("utf-8").strip()
+                        if line.startswith("data:"):
+                            gr = json.loads(line[5:])
+                            if "result" in gr:
+                                ct = gr["result"].get("content", [])
+                                for c in ct:
+                                    if isinstance(c, dict) and c.get("type") == "text":
+                                        text = c["text"]
+                                        # El text conte frontmatter YAML + compiled_truth
+                                        # El JSON esta dins d'un fenc de codi ```json ... ```
+                                        import re as _re
+                                        m = _re.search(r'```json\n(.+?)\n```', text, _re.DOTALL)
+                                        if m:
+                                            d = json.loads(m.group(1))
+                                        elif text.startswith("{"):
+                                            d = json.loads(text)
+            except Exception as e:
+                log(f"get_page velocity-data: {e} (creant nou)", "INFO")
+                d = {}
+        if not d or not isinstance(d, dict):
+            d = {}
         # Inicialitzar estructures
         d.setdefault("processed_days", {})
         d["processed_days"].setdefault(channel, [])
@@ -567,15 +606,22 @@ def velocity_update_amz(by_product, label, channel):
         if label > d["meta"].get("max_date", ""):
             d["meta"]["max_date"] = label
         d["meta"]["updated"] = label
-        # PUT
-        body = json.dumps(d, ensure_ascii=False).encode()
-        req = urllib.request.Request(
-            f"{VELOCITY_URL}?token={MCP_KEY}",
-            data=body, method="PUT",
-            headers={"Content-Type": "application/json"}
+        d["meta"]["source"] = "gbrain2-velocity-data"
+        # Escriure a GBrain2 (el JSON va dins d'un bloc ```json)
+        content = (
+            "---\ntype: concept\ntitle: Velocity Data (Dashboard)\n"
+            "updated: " + label + "\n---\n\n"
+            "# Velocity Data — Dashboard\n\n"
+            "> Dades agregades de vendes per SKU + canal + mes.\n"
+            "> Alimenta el dashboard de velocitat.\n"
+            "> Actualitzat automaticament cada nit pels scripts P&L.\n\n"
+            "```json\n" + json.dumps(d, ensure_ascii=False, indent=2) + "\n```\n"
         )
-        with urllib.request.urlopen(req, timeout=20) as r:
-            r.read()
+        result = _gbrain2_put_page("velocity-data", content)
+        if result is not None:
+            log(f"velocity_data GBrain2 OK: slug=velocity-data {channel} {label}")
+        else:
+            log(f"velocity_data GBrain2 WARN: resposta buida", "WARN")
     except Exception as e:
         log(f"velocity_update_amz ERROR: {e}", "WARN")
 
