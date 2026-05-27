@@ -52,9 +52,12 @@ if ! grep -q "^  default:" /data/.hermes/config.yaml 2>/dev/null; then
     sed -i 's/provider: auto/provider: anthropic/' /data/.hermes/config.yaml 2>/dev/null || true
 fi
 
-# ── Telegram gateway — auto-start with --replace to kill any stale process ────
-echo "[hermes] Starting Telegram gateway..."
-nohup hermes gateway run --replace > /data/.hermes/logs/gateway.log 2>&1 &
-echo "[hermes] Gateway started (PID $!)"
+# ── Telegram gateway: NO arrenquem aqui ───────────────────────────────────────
+# server.py's lifespan -> auto_start() -> gw.start() s'encarrega d'arrencar
+# el gateway via GatewayManager (que tambe usa `hermes gateway run --replace`).
+# Si arrenquem el gateway aqui en background a mes, els dos processos
+# competeixen pel PID file (/data/.hermes/gateway.pid) i un surt amb
+# "Another gateway instance ... started during our startup. Exiting".
+# Cf. /setup/api/gateway/{start,stop,restart} per a control manual.
 
 exec python /app/server.py
