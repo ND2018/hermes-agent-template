@@ -661,11 +661,18 @@ def velocity_update_gbrain():
                         if "result" in gr:
                             for c in gr["result"].get("content", []):
                                 if isinstance(c, dict) and c.get("type") == "text":
-                                    m = _re.search(r'```json\n(.+?)\n```', c["text"], _re.DOTALL)
+                                    # c["text"] es el page OBJECT JSON-stringified.
+                                    # Cal parsejar-lo i extreure compiled_truth, on hi ha el ```json block.
+                                    try:
+                                        _page = json.loads(c["text"])
+                                        _ct = _page.get("compiled_truth", "") if isinstance(_page, dict) else ""
+                                    except Exception:
+                                        _page, _ct = None, c["text"]
+                                    m = _re.search(r'```json\s*({.*?})\s*```', _ct, _re.DOTALL)
                                     if m:
                                         d = json.loads(m.group(1))
-                                    elif c["text"].startswith("{"):
-                                        d = json.loads(c["text"])
+                                    elif _ct.lstrip().startswith("{"):
+                                        d = json.loads(_ct)
         except Exception as e:
             log(f"velocity_update_gbrain GBrain2 read: {e} — fallback Hermes", "WARN")
             d = {}

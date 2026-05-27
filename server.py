@@ -1547,29 +1547,55 @@ async def route_velocity_vdata(request: Request) -> Response:
                 raw_data = json.loads(m.group(1)) if m else None
         except Exception:
             raw_data = None
-    # 2) Fallback: fetch from GBrain velocity-data page
+    # 2) Fallback: fetch from GBrain velocity-data page (full MCP SSE handshake)
     if not raw_data:
         try:
             g_url = os.environ.get("GBRAIN2_URL", "").rstrip("/")
             g_tok = os.environ.get("GBRAIN2_TOKEN", "")
             if g_url and g_tok:
                 import urllib.request as _ur
+                _body = json.dumps({
+                    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                    "params": {"name": "get_page", "arguments": {"slug": "velocity-data"}}
+                }).encode()
                 req = _ur.Request(
                     f"{g_url}/mcp",
-                    data=json.dumps({"method": "tools/call", "params": {
-                        "name": "gbrain_get_page",
-                        "arguments": {"slug": "velocity-data"}
-                    }}).encode(),
-                    headers={"Authorization": f"Bearer {g_tok}",
-                             "Content-Type": "application/json"})
-                with _ur.urlopen(req, timeout=10) as r:
-                    result = json.loads(r.read())
-                ct = next((x.get("text","") for x in result.get("content",[]) if x.get("type")=="text"), "")
-                m = re.search(r"```json\s*({.*?})\s*```", ct, re.DOTALL)
-                if m:
-                    raw_data = json.loads(m.group(1))
-        except Exception:
-            pass
+                    data=_body,
+                    method="POST",
+                    headers={
+                        "Authorization": f"Bearer {g_tok}",
+                        "Content-Type": "application/json",
+                        "Accept": "application/json, text/event-stream",
+                    },
+                )
+                with _ur.urlopen(req, timeout=15) as r:
+                    for raw_line in r:
+                        line = raw_line.decode("utf-8", errors="replace").strip()
+                        if not line.startswith("data:"):
+                            continue
+                        payload = json.loads(line[5:])
+                        if "result" not in payload:
+                            continue
+                        for c in payload["result"].get("content", []):
+                            if not (isinstance(c, dict) and c.get("type") == "text"):
+                                continue
+                            # c["text"] is the page OBJECT JSON-stringified.
+                            try:
+                                page = json.loads(c["text"])
+                                ct = page.get("compiled_truth", "") if isinstance(page, dict) else ""
+                            except Exception:
+                                ct = c["text"]
+                            m = re.search(r'```json\s*({.*?})\s*```', ct, re.DOTALL)
+                            if m:
+                                raw_data = json.loads(m.group(1))
+                                break
+                            if ct.lstrip().startswith("{"):
+                                raw_data = json.loads(ct)
+                                break
+                        if raw_data:
+                            break
+        except Exception as _e:
+            print(f"[vdata] GBrain fallback error: {_e}", flush=True)
     if not raw_data:
         return JSONResponse({"error": "velocity data not found"}, status_code=404)
     return Response(json.dumps(raw_data, ensure_ascii=False, separators=(",", ":")),
