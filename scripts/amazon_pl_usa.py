@@ -552,9 +552,45 @@ def velocity_update_gbrain():
     CANAL_LABELS = {"AMZ_EU":"Amazon EU","AMZ_USA":"Amazon USA","WEB_B2C":"Web B2C","B2B":"B2B","MAJORISTA_NATURITAS":"Majorista Naturitas"}
     SKU_ORDER    = ["1#1M","1#3M","1#PLUS","1#MAX","US1#1M","US1#PLUS","US1#MAX"]
     try:
-        req = urllib.request.Request(f"{VELOCITY_URL}?token={TOKEN}", headers={"Cache-Control":"no-cache"})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            d = json.loads(r.read())
+        # Llegir directament de GBrain2 (slug: velocity-data); fallback a Hermes /api/velocity
+        import re as _re
+        d = {}
+        try:
+            get_body = json.dumps({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": "get_page", "arguments": {"slug": "velocity-data"}}
+            }).encode()
+            get_req = urllib.request.Request(
+                f"{GBRAIN2_URL}/mcp",
+                data=get_body,
+                headers={
+                    "Authorization": f"Bearer {GBRAIN2_TOKEN}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json, text/event-stream",
+                },
+                method="POST"
+            )
+            with urllib.request.urlopen(get_req, timeout=20) as r:
+                for raw_line in r:
+                    line = raw_line.decode("utf-8").strip()
+                    if line.startswith("data:"):
+                        gr = json.loads(line[5:])
+                        if "result" in gr:
+                            for c in gr["result"].get("content", []):
+                                if isinstance(c, dict) and c.get("type") == "text":
+                                    m = _re.search(r'```json\n(.+?)\n```', c["text"], _re.DOTALL)
+                                    if m:
+                                        d = json.loads(m.group(1))
+                                    elif c["text"].startswith("{"):
+                                        d = json.loads(c["text"])
+        except Exception as e:
+            log(f"velocity_update_gbrain GBrain2 read: {e} — fallback Hermes", "WARN")
+            d = {}
+        if not d or not isinstance(d, dict) or not d.get("MONTHS"):
+            log("velocity_update_gbrain: no data a GBrain2, fallback a Hermes /api/velocity", "WARN")
+            req = urllib.request.Request(f"{VELOCITY_URL}?token={TOKEN}", headers={"Cache-Control":"no-cache"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                d = json.loads(r.read())
         SKU_DATA = d.get("SKU_DATA", {})
         MONTHS   = sorted(d.get("MONTHS", []))
         updated  = d.get("meta", {}).get("updated", str(datetime.date.today()))

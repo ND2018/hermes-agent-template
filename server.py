@@ -655,7 +655,21 @@ async def page_index(request: Request):
 
 
 async def route_health(request: Request):
-    return JSONResponse({"status": "ok", "gateway": gw.state})
+    # Check the gateway PID file in addition to gw.state. start.sh launches
+    # the gateway as a separate process that writes its pid to HERMES_HOME/gateway.pid;
+    # gw.state only reflects the GatewayManager-spawned copy, which can be "error"
+    # even when the start.sh gateway is healthy.
+    pid_file = os.path.join(HERMES_HOME, "gateway.pid")
+    gw_actual = "stopped"
+    try:
+        if os.path.exists(pid_file):
+            pid = int(open(pid_file).read().strip())
+            os.kill(pid, 0)  # signal 0 = check existence
+            gw_actual = "running"
+    except (OSError, ValueError):
+        pass
+    gateway = gw.state if gw.state == "running" else gw_actual
+    return JSONResponse({"status": "ok", "gateway": gateway})
 
 
 async def api_config_get(request: Request):
@@ -1522,6 +1536,51 @@ async def route_velocity_put(request: Request) -> Response:
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
+async def route_gbrain_sync(request: Request) -> Response:
+    """POST /api/gbrain-sync — escriu {slug, data|payload} a GBrain2 via put_page.
+
+    Called by Railway scripts that want to push state into GBrain2 through Hermes
+    (so they don't need to embed the GBrain2 token themselves).
+    """
+    import datetime as _dt
+    _CORS = {"Access-Control-Allow-Origin": "*",
+             "Access-Control-Allow-Methods": "POST, OPTIONS",
+             "Access-Control-Allow-Headers": "Authorization, Content-Type"}
+    if request.method == "OPTIONS":
+        return Response("", headers=_CORS)
+    if not _check_mcp_auth(request):
+        return Response("Unauthorized", status_code=401)
+    try:
+        body = await request.json()
+        slug = body.get("slug", "velocity-data")
+        data_payload = body.get("data", body.get("payload", body))
+        ts = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        safe_slug = slug.replace("/", "-").replace(" ", "-").lower()
+        if isinstance(data_payload, dict):
+            content_md = (
+                "---\n"
+                "title: GBrain Sync Data\n"
+                "type: data\n"
+                f"updated: {ts}\n"
+                "---\n\n"
+                "```json\n"
+                f"{json.dumps(data_payload, indent=2, ensure_ascii=False)}\n"
+                "```\n"
+            )
+        else:
+            content_md = str(data_payload)
+        result_text = await _call_gbrain(["put", safe_slug, "--content", content_md])
+        ok = bool(result_text) and "error" not in (result_text or "").lower()
+        print(f"[gbrain-sync] wrote slug={safe_slug} ok={ok}", flush=True)
+        return JSONResponse(
+            {"ok": ok, "slug": safe_slug, "result": (result_text or "")[:500]},
+            headers=_CORS,
+        )
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        print(f"[gbrain-sync] ERROR: {e}", flush=True)
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500, headers=_CORS)
 # ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ Velocity short-URL endpoint (artifact-friendly, PIN auth) ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
 VELOCITY_SHORT_PIN = "nd2018"  # simple read-only PIN, URL stays short for web_fetch
 
@@ -1881,6 +1940,7 @@ routes = [
     Route("/api/velocity",  route_velocity_get,  methods=["GET"]),
     Route("/api/velocity",  route_velocity_put,  methods=["PUT"]),
     Route("/api/vdata",     route_velocity_vdata, methods=["GET", "OPTIONS"]),
+    Route("/api/gbrain-sync", route_gbrain_sync, methods=["POST", "OPTIONS"]),
 
         Route("/velocity",              route_velocity_dashboard,    methods=["GET"]),
 
