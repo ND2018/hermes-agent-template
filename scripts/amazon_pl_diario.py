@@ -71,7 +71,7 @@ MCP_KEY       = os.environ.get("MCP_KEY") or os.environ.get("MCP_API_KEY") or _r
 
 # ── GBrain Naturdao v0.41.2.0 ───────────────────────────────────────────────────────────────────
 GBRAIN2_URL   = "https://gbrain-naturdao-production.up.railway.app"
-GBRAIN2_TOKEN = "gbrain_at_0d401522ee9bc19c2da0ff95d5ba7d7bc9e421b0479f9743e7ab691dde5011db"
+GBRAIN2_TOKEN = os.environ.get("GBRAIN2_TOKEN") or "gbrain_a9b8bf9df9ea887aaf2bced0b7e06b569dd884b32e0a0824b7e1947836ab1174"
 
 def _gbrain2_put_page(slug, content, timeout=30):
     """Escriu una pagina al GBrain Naturdao v0.41.2.0 via MCP SSE."""
