@@ -1546,7 +1546,7 @@ VELOCITY_DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Velocitat Vendes ÃÂ¢ÃÂÃÂ Naturdao</title>
+<title>Velocitat Vendes  -  Naturdao</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" crossorigin="anonymous"></script>
 <style>
 :root{color-scheme:light}
@@ -1595,8 +1595,8 @@ h1{font-size:16px;font-weight:700;margin-bottom:2px}
 </style>
 </head>
 <body>
-<h1>ÃÂ°ÃÂÃÂÃÂ Velocitat Vendes per SKU ÃÂ¢ÃÂÃÂ Naturdao</h1>
-<p class="sub">Dades: Hermes privat ÃÂÃÂ· Actualitzat cada nit automÃÂÃÂ ticament</p>
+<h1> Velocitat Vendes per SKU  -  Naturdao</h1>
+<p class="sub">Dades: Hermes privat &middot; Actualitzat cada nit automaticament</p>
 <div id="status" class="status loading"><span class="spinner"></span> Carregant...</div>
 <div id="app" style="display:none">
   <div class="filters">
@@ -1617,7 +1617,7 @@ h1{font-size:16px;font-weight:700;margin-bottom:2px}
   <div class="sku-row" id="skus"></div>
   <div class="mkt-row" id="markets"></div>
   <div class="view-tabs">
-    <span style="font-size:10px;color:#94a3b8">GrÃÂÃÂ fics per:</span>
+    <span style="font-size:10px;color:#94a3b8">Grafics per:</span>
     <button class="vtab active" onclick="setView('canal')">Canal</button>
     <button class="vtab" onclick="setView('sku')">Producte</button>
   </div>
@@ -1626,7 +1626,7 @@ h1{font-size:16px;font-weight:700;margin-bottom:2px}
     <div class="cc"><h2>Mix</h2><div class="donut-wrap"><canvas id="cd"></canvas></div></div>
   </div>
   <div class="chart-row">
-    <div class="cc"><h2>TendÃÂÃÂ¨ncia</h2><canvas id="cl"></canvas></div>
+    <div class="cc"><h2>Tendencia</h2><canvas id="cl"></canvas></div>
     <div class="cc"><h2>Ranking</h2><canvas id="cb"></canvas></div>
   </div>
 </div>
@@ -1654,10 +1654,10 @@ async function loadData(){
     if(!dataset.months.length)throw new Error('Sense dades');
     initDashboard(dataset);
     document.getElementById('status').className='status ok';
-    document.getElementById('status').textContent='ÃÂ¢ÃÂÃÂ Dades del '+dataset.updated;
+    document.getElementById('status').textContent='OK Dades del '+dataset.updated;
   }catch(err){
     document.getElementById('status').className='status error';
-    document.getElementById('status').textContent='ÃÂ¢ÃÂÃÂ '+err.message;
+    document.getElementById('status').textContent='Error '+err.message;
   }
 }
 function initDashboard(ds){
@@ -1713,7 +1713,7 @@ function setPreset(days){
   document.querySelectorAll('.pbtn').forEach(b=>b.classList.toggle('active',b.textContent===PLBL[days]));
   const e=new Date(MAX_DATE),s=new Date(MAX_DATE);s.setDate(s.getDate()-days+1);
   const mn=d=>d.getDate()+' '+MNAMES[d.getMonth()]+(s.getFullYear()!==e.getFullYear()?' '+String(d.getFullYear()).slice(2):'');
-  document.getElementById('period-lbl').textContent=mn(s)+' ÃÂ¢ÃÂÃÂ '+mn(e);
+  document.getElementById('period-lbl').textContent=mn(s)+' > '+mn(e);
   update();
 }
 function setView(v){chartView=v;document.querySelectorAll('.vtab').forEach(b=>b.classList.toggle('active',b.textContent===(v==='canal'?'Canal':'Producte')));const d=computePreset(activePreset);renderCharts(d);}
@@ -1727,8 +1727,8 @@ function renderKPIs(d){
     {l:'Total',v:grand.toLocaleString('ca'),s:pd+' dies',bc:''},
     {l:'Mitjana/mes',v:rate(grand).toLocaleString('ca'),s:'u/mes',bc:''},
     ...canals.map(c=>({l:CANAL_LABELS[c],v:ct[c].toLocaleString('ca'),s:rate(ct[c]).toLocaleString('ca')+' u/mes',bc:CANAL_COLORS[c]})),
-    {l:'ÃÂ°ÃÂÃÂÃÂªÃÂ°ÃÂÃÂÃÂº EU',v:eu.toLocaleString('ca'),s:rate(eu).toLocaleString('ca')+' u/mes',bc:'#3b82f6'},
-    {l:'ÃÂ°ÃÂÃÂÃÂºÃÂ°ÃÂÃÂÃÂ¸ USA',v:usa.toLocaleString('ca'),s:rate(usa).toLocaleString('ca')+' u/mes',bc:'#ef4444'},
+    {l:'EU EU',v:eu.toLocaleString('ca'),s:rate(eu).toLocaleString('ca')+' u/mes',bc:'#3b82f6'},
+    {l:'USA USA',v:usa.toLocaleString('ca'),s:rate(usa).toLocaleString('ca')+' u/mes',bc:'#ef4444'},
   ];
   document.getElementById('kpis').innerHTML=cards.map(c=>`<div class="kc" style="${c.bc?'border-left:3px solid '+c.bc:''}"><div class="kl" style="${c.bc?'color:'+c.bc:''}">${c.l}</div><div class="kv">${c.v}</div><div class="ks">${c.s}</div></div>`).join('');
 }
@@ -1744,7 +1744,7 @@ function renderMarkets(d){
   const rate=v=>pd?Math.round(v/pd*30):Math.round(v/Math.max(n,1));
   const eu=EU_SKUS.filter(s=>skus.includes(s)).reduce((a,s)=>a+(st[s]||0),0);
   const usa=USA_SKUS.filter(s=>skus.includes(s)).reduce((a,s)=>a+(st[s]||0),0);
-  document.getElementById('markets').innerHTML=`<div class="mc" style="border-left:3px solid #3b82f6"><div class="ml" style="color:#3b82f6">ÃÂ°ÃÂÃÂÃÂªÃÂ°ÃÂÃÂÃÂº Europa</div><div class="mv">${eu.toLocaleString('ca')}</div><div class="ms">${rate(eu).toLocaleString('ca')} u/mes</div></div><div class="mc" style="border-left:3px solid #ef4444"><div class="ml" style="color:#ef4444">ÃÂ°ÃÂÃÂÃÂºÃÂ°ÃÂÃÂÃÂ¸ USA</div><div class="mv">${usa.toLocaleString('ca')}</div><div class="ms">${rate(usa).toLocaleString('ca')} u/mes</div></div>`;
+  document.getElementById('markets').innerHTML=`<div class="mc" style="border-left:3px solid #3b82f6"><div class="ml" style="color:#3b82f6">EU Europa</div><div class="mv">${eu.toLocaleString('ca')}</div><div class="ms">${rate(eu).toLocaleString('ca')} u/mes</div></div><div class="mc" style="border-left:3px solid #ef4444"><div class="ml" style="color:#ef4444">USA USA</div><div class="mv">${usa.toLocaleString('ca')}</div><div class="ms">${rate(usa).toLocaleString('ca')} u/mes</div></div>`;
 }
 const LEG={position:'bottom',labels:{color:'#64748b',font:{size:10},boxWidth:10}};
 const AXIS={ticks:{color:'#94a3b8',font:{size:10}},grid:{color:'#f1f5f9'}};
