@@ -490,22 +490,8 @@ class Gateway:
         self.logs: deque[str] = deque(maxlen=500)
         self.started_at: float | None = None
         self.restarts = 0
-        # Health-loop bookkeeping. When `hermes gateway run` exits without an
-        # explicit stop() (crash, OOM, killed upstream), _drain() schedules a
-        # delayed restart with exponential backoff. After MAX consecutive
-        # failures within a short window we give up and leave the gateway in
-        # "error" state — manual /setup/api/gateway/start is required to retry.
-        self._stop_requested = False
-        self._consecutive_failures = 0
-        self._restart_task: asyncio.Task | None = None
 
     async def start(self):
-        # Cancel any pending auto-restart — the user (or auto_start) is starting
-        # us explicitly, so the delayed loop is no longer needed.
-        if self._restart_task and not self._restart_task.done():
-            self._restart_task.cancel()
-            self._restart_task = None
-        self._stop_requested = False
         if self.proc and self.proc.returncode is None:
             return
         self.state = "starting"
@@ -534,13 +520,6 @@ class Gateway:
             self.logs.append(f"[error] Failed to start: {e}")
 
     async def stop(self):
-        # Signal _drain() and any pending _delayed_restart() to NOT auto-restart.
-        # Must be set before any await so the cancellation is visible to other
-        # tasks before they get a chance to run.
-        self._stop_requested = True
-        if self._restart_task and not self._restart_task.done():
-            self._restart_task.cancel()
-            self._restart_task = None
         if not self.proc or self.proc.returncode is not None:
             self.state = "stopped"
             return
@@ -559,56 +538,14 @@ class Gateway:
         self.restarts += 1
         await self.start()
 
-    # Backoff schedule for unexpected exits. After this many consecutive
-    # failures within a short window we give up to avoid hammering DeepSeek/
-    # Anthropic when credentials are wrong or the upstream is down.
-    _RESTART_BACKOFF_SECS = [5, 15, 30, 60, 120]
-    _HEALTHY_RUN_THRESHOLD_SECS = 300  # uptime > 5min ⇒ reset failure counter
-
     async def _drain(self):
         assert self.proc and self.proc.stdout
         async for raw in self.proc.stdout:
             line = ANSI_ESCAPE.sub("", raw.decode(errors="replace").rstrip())
             self.logs.append(line)
-        # Process has exited. Determine if it was an explicit stop or a crash.
-        exit_code = self.proc.returncode if self.proc else -1
-        if self._stop_requested or self.state in ("stopping", "stopped"):
-            # Explicit stop — _drain just observed terminate(). Don't restart.
-            return
-        if self.state != "running":
-            # Already errored / crashed during start — don't double-schedule.
-            self.logs.append(f"[error] Gateway exited (code {exit_code}) — state was {self.state!r}, not auto-restarting")
-            return
-        uptime = (time.time() - self.started_at) if self.started_at else 0
-        self.state = "error"
-        self.logs.append(f"[error] Gateway exited (code {exit_code}) after {int(uptime)}s")
-        # If the gateway ran healthily for a while before crashing, treat this
-        # as a fresh failure (reset counter). Otherwise increment.
-        if uptime > self._HEALTHY_RUN_THRESHOLD_SECS:
-            self._consecutive_failures = 0
-        self._consecutive_failures += 1
-        if self._consecutive_failures > len(self._RESTART_BACKOFF_SECS):
-            self.logs.append(
-                f"[error] Auto-restart giving up after {self._consecutive_failures - 1} "
-                "consecutive failures. POST /setup/api/gateway/start to retry."
-            )
-            return
-        delay = self._RESTART_BACKOFF_SECS[self._consecutive_failures - 1]
-        self.logs.append(
-            f"[info] Auto-restart in {delay}s "
-            f"(attempt {self._consecutive_failures}/{len(self._RESTART_BACKOFF_SECS)})"
-        )
-        self._restart_task = asyncio.create_task(self._delayed_restart(delay))
-
-    async def _delayed_restart(self, delay: float):
-        try:
-            await asyncio.sleep(delay)
-        except asyncio.CancelledError:
-            return
-        if self._stop_requested or self.state in ("stopping", "stopped"):
-            return
-        self.restarts += 1
-        await self.start()
+        if self.state == "running":
+            self.state = "error"
+            self.logs.append(f"[error] Gateway exited (code {self.proc.returncode})")
 
     def status(self) -> dict:
         uptime = int(time.time() - self.started_at) if self.started_at and self.state == "running" else None
@@ -718,21 +655,7 @@ async def page_index(request: Request):
 
 
 async def route_health(request: Request):
-    # Check the gateway PID file in addition to gw.state. start.sh launches
-    # the gateway as a separate process that writes its pid to HERMES_HOME/gateway.pid;
-    # gw.state only reflects the GatewayManager-spawned copy, which can be "error"
-    # even when the start.sh gateway is healthy.
-    pid_file = os.path.join(HERMES_HOME, "gateway.pid")
-    gw_actual = "stopped"
-    try:
-        if os.path.exists(pid_file):
-            pid = int(open(pid_file).read().strip())
-            os.kill(pid, 0)  # signal 0 = check existence
-            gw_actual = "running"
-    except (OSError, ValueError):
-        pass
-    gateway = gw.state if gw.state == "running" else gw_actual
-    return JSONResponse({"status": "ok", "gateway": gateway})
+    return JSONResponse({"status": "ok", "gateway": gw.state})
 
 
 async def api_config_get(request: Request):
@@ -1599,59 +1522,11 @@ async def route_velocity_put(request: Request) -> Response:
         return JSONResponse({"error": str(e)}, status_code=400)
 
 
-async def route_gbrain_sync(request: Request) -> Response:
-    """POST /api/gbrain-sync — escriu {slug, data|payload} a GBrain2 via put_page.
-
-    Called by Railway scripts that want to push state into GBrain2 through Hermes
-    (so they don't need to embed the GBrain2 token themselves).
-    """
-    import datetime as _dt
-    _CORS = {"Access-Control-Allow-Origin": "*",
-             "Access-Control-Allow-Methods": "POST, OPTIONS",
-             "Access-Control-Allow-Headers": "Authorization, Content-Type"}
-    if request.method == "OPTIONS":
-        return Response("", headers=_CORS)
-    if not _check_mcp_auth(request):
-        return Response("Unauthorized", status_code=401)
-    try:
-        body = await request.json()
-        slug = body.get("slug", "velocity-data")
-        data_payload = body.get("data", body.get("payload", body))
-        ts = _dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
-        safe_slug = slug.replace("/", "-").replace(" ", "-").lower()
-        if isinstance(data_payload, dict):
-            content_md = (
-                "---\n"
-                "title: GBrain Sync Data\n"
-                "type: data\n"
-                f"updated: {ts}\n"
-                "---\n\n"
-                "```json\n"
-                f"{json.dumps(data_payload, indent=2, ensure_ascii=False)}\n"
-                "```\n"
-            )
-        else:
-            content_md = str(data_payload)
-        result_text = await _call_gbrain(["put", safe_slug, "--content", content_md])
-        ok = bool(result_text) and "error" not in (result_text or "").lower()
-        print(f"[gbrain-sync] wrote slug={safe_slug} ok={ok}", flush=True)
-        return JSONResponse(
-            {"ok": ok, "slug": safe_slug, "result": (result_text or "")[:500]},
-            headers=_CORS,
-        )
-    except Exception as e:
-        import traceback as _tb
-        _tb.print_exc()
-        print(f"[gbrain-sync] ERROR: {e}", flush=True)
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=500, headers=_CORS)
 # ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ Velocity short-URL endpoint (artifact-friendly, PIN auth) ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
 VELOCITY_SHORT_PIN = "nd2018"  # simple read-only PIN, URL stays short for web_fetch
 
 async def route_velocity_vdata(request: Request) -> Response:
-    """GET /api/vdata?pin=nd2018  — endpoint curt per a artifacts (URL <= 80 chars).
-
-    Llegeix les dades de GBrain2 (slug: velocity-data) en comptes del fitxer local.
-    """
+    """GET /api/vdata?pin=nd2018 -- short PIN endpoint for Chrome dashboard."""
     _CORS = {"Access-Control-Allow-Origin": "*",
              "Access-Control-Allow-Methods": "GET, OPTIONS",
              "Access-Control-Allow-Headers": "Authorization, Content-Type"}
@@ -1660,61 +1535,46 @@ async def route_velocity_vdata(request: Request) -> Response:
     pin = request.query_params.get("pin", "")
     if pin != VELOCITY_SHORT_PIN:
         return Response("Unauthorized", status_code=401)
-    # Llegir de GBrain2 via HTTP directe
-    GBRAIN2_URL = os.environ.get("GBRAIN2_URL", "https://gbrain-naturdao-production.up.railway.app")
-    GBRAIN2_TOKEN = os.environ.get("GBRAIN2_TOKEN", "")
-    if not GBRAIN2_TOKEN:
-        return JSONResponse({"error": "GBRAIN2_TOKEN not configured"}, status_code=500)
-    try:
-        async with httpx.AsyncClient(verify=False, timeout=15) as client:
-            mcp_body = {
-                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                "params": {"name": "get_page", "arguments": {"slug": "velocity-data"}}
-            }
-            resp = await client.post(
-                f"{GBRAIN2_URL}/mcp",
-                json=mcp_body,
-                headers={
-                    "Authorization": f"Bearer {GBRAIN2_TOKEN}",
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/event-stream",
-                }
-            )
-            if resp.status_code != 200:
-                return JSONResponse({"error": f"GBrain2 HTTP {resp.status_code}"}, status_code=502)
-            # Parsejar resposta SSE
-            raw = resp.text
-            for line in raw.splitlines():
-                line = line.strip()
-                if line.startswith("data:"):
-                    gr = json.loads(line[5:])
-                    if "result" in gr:
-                        for c in gr["result"].get("content", []):
-                            if isinstance(c, dict) and c.get("type") == "text":
-                                text = c["text"]
-                                import re
-                                m = re.search(r'```json\n(.+?)\n```', text, re.DOTALL)
-                                if m:
-                                    data = json.loads(m.group(1))
-                                    return Response(
-                                        json.dumps(data, ensure_ascii=False),
-                                        media_type="application/json", headers=_CORS
-                                    )
-                                elif text.startswith("{"):
-                                    data = json.loads(text)
-                                    return Response(
-                                        json.dumps(data, ensure_ascii=False),
-                                        media_type="application/json", headers=_CORS
-                                    )
-            return JSONResponse({"error": "no data found in GBrain2"}, status_code=404)
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=502)
-
-# Fallback: si GBrain2 no respon, intentar fitxer local
+    raw_data = None
+    # 1) Try local file
     if VELOCITY_FILE.exists():
-        return Response(VELOCITY_FILE.read_text(encoding="utf-8"),
-                        media_type="application/json", headers=_CORS)
-    return JSONResponse({"error": "velocity data not found"}, status_code=404)
+        try:
+            raw_data = json.loads(VELOCITY_FILE.read_text(encoding="utf-8"))
+            # If it's a GBrain page wrapper, unwrap it
+            if "compiled_truth" in raw_data and "MONTHS" not in raw_data:
+                ct = raw_data.get("compiled_truth", "")
+                m = re.search(r"```json\s*({.*?})\s*```", ct, re.DOTALL)
+                raw_data = json.loads(m.group(1)) if m else None
+        except Exception:
+            raw_data = None
+    # 2) Fallback: fetch from GBrain velocity-data page
+    if not raw_data:
+        try:
+            g_url = os.environ.get("GBRAIN2_URL", "").rstrip("/")
+            g_tok = os.environ.get("GBRAIN2_TOKEN", "")
+            if g_url and g_tok:
+                import urllib.request as _ur
+                req = _ur.Request(
+                    f"{g_url}/mcp",
+                    data=json.dumps({"method": "tools/call", "params": {
+                        "name": "gbrain_get_page",
+                        "arguments": {"slug": "velocity-data"}
+                    }}).encode(),
+                    headers={"Authorization": f"Bearer {g_tok}",
+                             "Content-Type": "application/json"})
+                with _ur.urlopen(req, timeout=10) as r:
+                    result = json.loads(r.read())
+                ct = next((x.get("text","") for x in result.get("content",[]) if x.get("type")=="text"), "")
+                m = re.search(r"```json\s*({.*?})\s*```", ct, re.DOTALL)
+                if m:
+                    raw_data = json.loads(m.group(1))
+        except Exception:
+            pass
+    if not raw_data:
+        return JSONResponse({"error": "velocity data not found"}, status_code=404)
+    return Response(json.dumps(raw_data, ensure_ascii=False, separators=(",", ":")),
+                    media_type="application/json", headers=_CORS)
+
 
 # ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ Velocity Dashboard (Chrome-compatible, token-auth) ÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂÃÂ¢ÃÂÃÂ
 VELOCITY_DASHBOARD_HTML = """<!DOCTYPE html>
@@ -2003,7 +1863,6 @@ routes = [
     Route("/api/velocity",  route_velocity_get,  methods=["GET"]),
     Route("/api/velocity",  route_velocity_put,  methods=["PUT"]),
     Route("/api/vdata",     route_velocity_vdata, methods=["GET", "OPTIONS"]),
-    Route("/api/gbrain-sync", route_gbrain_sync, methods=["POST", "OPTIONS"]),
 
         Route("/velocity",              route_velocity_dashboard,    methods=["GET"]),
 
