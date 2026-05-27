@@ -490,8 +490,22 @@ class Gateway:
         self.logs: deque[str] = deque(maxlen=500)
         self.started_at: float | None = None
         self.restarts = 0
+        # Health-loop bookkeeping. When `hermes gateway run` exits without an
+        # explicit stop() (crash, OOM, killed upstream), _drain() schedules a
+        # delayed restart with exponential backoff. After MAX consecutive
+        # failures within a short window we give up and leave the gateway in
+        # "error" state — manual /setup/api/gateway/start is required to retry.
+        self._stop_requested = False
+        self._consecutive_failures = 0
+        self._restart_task: asyncio.Task | None = None
 
     async def start(self):
+        # Cancel any pending auto-restart — the user (or auto_start) is starting
+        # us explicitly, so the delayed loop is no longer needed.
+        if self._restart_task and not self._restart_task.done():
+            self._restart_task.cancel()
+            self._restart_task = None
+        self._stop_requested = False
         if self.proc and self.proc.returncode is None:
             return
         self.state = "starting"
@@ -520,6 +534,13 @@ class Gateway:
             self.logs.append(f"[error] Failed to start: {e}")
 
     async def stop(self):
+        # Signal _drain() and any pending _delayed_restart() to NOT auto-restart.
+        # Must be set before any await so the cancellation is visible to other
+        # tasks before they get a chance to run.
+        self._stop_requested = True
+        if self._restart_task and not self._restart_task.done():
+            self._restart_task.cancel()
+            self._restart_task = None
         if not self.proc or self.proc.returncode is not None:
             self.state = "stopped"
             return
@@ -538,14 +559,56 @@ class Gateway:
         self.restarts += 1
         await self.start()
 
+    # Backoff schedule for unexpected exits. After this many consecutive
+    # failures within a short window we give up to avoid hammering DeepSeek/
+    # Anthropic when credentials are wrong or the upstream is down.
+    _RESTART_BACKOFF_SECS = [5, 15, 30, 60, 120]
+    _HEALTHY_RUN_THRESHOLD_SECS = 300  # uptime > 5min ⇒ reset failure counter
+
     async def _drain(self):
         assert self.proc and self.proc.stdout
         async for raw in self.proc.stdout:
             line = ANSI_ESCAPE.sub("", raw.decode(errors="replace").rstrip())
             self.logs.append(line)
-        if self.state == "running":
-            self.state = "error"
-            self.logs.append(f"[error] Gateway exited (code {self.proc.returncode})")
+        # Process has exited. Determine if it was an explicit stop or a crash.
+        exit_code = self.proc.returncode if self.proc else -1
+        if self._stop_requested or self.state in ("stopping", "stopped"):
+            # Explicit stop — _drain just observed terminate(). Don't restart.
+            return
+        if self.state != "running":
+            # Already errored / crashed during start — don't double-schedule.
+            self.logs.append(f"[error] Gateway exited (code {exit_code}) — state was {self.state!r}, not auto-restarting")
+            return
+        uptime = (time.time() - self.started_at) if self.started_at else 0
+        self.state = "error"
+        self.logs.append(f"[error] Gateway exited (code {exit_code}) after {int(uptime)}s")
+        # If the gateway ran healthily for a while before crashing, treat this
+        # as a fresh failure (reset counter). Otherwise increment.
+        if uptime > self._HEALTHY_RUN_THRESHOLD_SECS:
+            self._consecutive_failures = 0
+        self._consecutive_failures += 1
+        if self._consecutive_failures > len(self._RESTART_BACKOFF_SECS):
+            self.logs.append(
+                f"[error] Auto-restart giving up after {self._consecutive_failures - 1} "
+                "consecutive failures. POST /setup/api/gateway/start to retry."
+            )
+            return
+        delay = self._RESTART_BACKOFF_SECS[self._consecutive_failures - 1]
+        self.logs.append(
+            f"[info] Auto-restart in {delay}s "
+            f"(attempt {self._consecutive_failures}/{len(self._RESTART_BACKOFF_SECS)})"
+        )
+        self._restart_task = asyncio.create_task(self._delayed_restart(delay))
+
+    async def _delayed_restart(self, delay: float):
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if self._stop_requested or self.state in ("stopping", "stopped"):
+            return
+        self.restarts += 1
+        await self.start()
 
     def status(self) -> dict:
         uptime = int(time.time() - self.started_at) if self.started_at and self.state == "running" else None
