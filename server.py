@@ -1685,7 +1685,12 @@ async function loadData(){
   try{
     const r=await fetch(API_URL);
     if(!r.ok)throw new Error('HTTP '+r.status);
-    const d=await r.json();
+    let d=await r.json();
+    // Handle GBrain page format: extract velocity JSON from compiled_truth
+    if(d.compiled_truth&&!d.MONTHS){
+      const m=d.compiled_truth.match(/```json\s*({[\s\S]*?})\s*```/);
+      if(m){try{d=JSON.parse(m[1]);}catch(e){}}
+    }
     const dataset={updated:(d.meta&&d.meta.updated)||new Date().toISOString().slice(0,10),months:d.MONTHS||[],data:d.SKU_DATA||{}};
     if(!dataset.months.length)throw new Error('Sense dades');
     initDashboard(dataset);
