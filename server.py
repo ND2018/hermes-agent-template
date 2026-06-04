@@ -35,6 +35,7 @@ injected into every proxied HTML response so users can always return to the wiza
 
 import asyncio
 import amazon_scheduler
+import woocommerce_routes
 import json
 import os
 import re
@@ -1891,6 +1892,8 @@ routes = [
     WebSocketRoute("/api/events",               ws_proxy),
 
     # Velocity data ÃÂ¢ÃÂÃÂ Bearer-token guarded (also ?token= for web_fetch).
+    Route("/api/b2b-orders", woocommerce_routes.route_b2b_orders, methods=["GET", "OPTIONS"]),
+
     Route("/api/velocity",  route_velocity_get,  methods=["GET"]),
     Route("/api/velocity",  route_velocity_put,  methods=["PUT"]),
     Route("/api/vdata",     route_velocity_vdata, methods=["GET", "OPTIONS"]),
