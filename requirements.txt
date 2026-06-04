@@ -7,3 +7,5 @@ httpx>=0.27.0
 # hermes's /api/pty, /api/ws, /api/events endpoints. httpx does not speak
 # WebSockets, so we need a dedicated client library.
 websockets>=12.0
+# PostgreSQL driver for direct Railway DB queries (b2b-orders endpoint).
+psycopg2-binary>=2.9.0
