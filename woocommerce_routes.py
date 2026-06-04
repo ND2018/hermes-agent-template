@@ -31,6 +31,7 @@ _EXCLUDED_CUSTOMER = 3475  # Fedfarma
 _CORS_HEADERS = {
     "Access-Control-Allow-Origin":  "*",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
 }
 
 _SQL = """
@@ -56,7 +57,7 @@ async def route_b2b_orders(request: Request) -> Response:
 
     # ── Handle OPTIONS preflight ──────────────────────────────────────────────
     if request.method == "OPTIONS":
-        return Response(status_code=204, headers=_CORS_HEADERS)
+        return Response(status_code=204, headers=dict(_CORS_HEADERS))
 
     # ── Parse query params ────────────────────────────────────────────────────
     today = date.today()
@@ -73,7 +74,7 @@ async def route_b2b_orders(request: Request) -> Response:
         return JSONResponse(
             {"error": f"Invalid date format: {exc}"},
             status_code=400,
-            headers=_CORS_HEADERS,
+            headers=dict(_CORS_HEADERS),
         )
 
     # ── Query DB ──────────────────────────────────────────────────────────────
@@ -89,7 +90,7 @@ async def route_b2b_orders(request: Request) -> Response:
         return JSONResponse(
             {"error": f"DB error: {exc}"},
             status_code=500,
-            headers=_CORS_HEADERS,
+            headers=dict(_CORS_HEADERS),
         )
 
     # ── Split into orders / excluded ──────────────────────────────────────────
@@ -122,8 +123,7 @@ async def route_b2b_orders(request: Request) -> Response:
         "queried_from": "railway_db",
     }
 
-    return Response(
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-        media_type="application/json",
-        headers=_CORS_HEADERS,
+    return JSONResponse(
+        payload,
+        headers=dict(_CORS_HEADERS),
     )
