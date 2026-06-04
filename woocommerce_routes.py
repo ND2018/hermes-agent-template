@@ -3,31 +3,41 @@ WooCommerce B2B orders endpoint for Hermes server.
 
 GET /api/b2b-orders?after=YYYY-MM-DD&before=YYYY-MM-DD
 
-Returns B2B orders filtered to 'professionals' role customers,
-excluding fedfarma/federaci farmac companies and bank-transfer payments.
+Returns B2B orders queried directly from Railway PostgreSQL DB,
+filtered by channel='B2B', excluding bank-transfer payments (bacs/transferencia)
+and the Fedfarma customer (customer_id=1 is reserved; excluded by known IDs list).
+
+NOTE: The Railway PostgreSQL DB (naturdao) does NOT have a customers table with
+roles. B2B filtering is done via the 'channel' column ('B2B') stored in woo_orders.
+There is no 'company' field in the DB — the company field in the response will
+contain a placeholder with the customer_id for downstream enrichment.
 """
 
-import asyncio
 from datetime import date, datetime
 from typing import Any
 
-import httpx
+import psycopg2
+import psycopg2.extras
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 # ---------------------------------------------------------------------------
-# WooCommerce credentials (naturdao.com)
+# Railway PostgreSQL connection settings
 # ---------------------------------------------------------------------------
-WC_BASE_URL = "https://naturdao.com/wp-json/wc/v3"
-WC_CONSUMER_KEY = "ck_3ee57d27db80e2825a8b8239507173d79f6910c3"
-WC_CONSUMER_SECRET = "cs_76a0e19e53fb93261bf11c5a27124ceab3fab7ac"
-WC_AUTH = (WC_CONSUMER_KEY, WC_CONSUMER_SECRET)
+DB_CONFIG = {
+    "host": "caboose.proxy.rlwy.net",
+    "port": 25831,
+    "user": "naturdao",
+    "password": "Naturdao2026SecureDB!",
+    "dbname": "naturdao",
+}
 
-# Payment methods to exclude
+# Payment methods to exclude (lowercase)
 EXCLUDED_PAYMENT_METHODS = {"bacs", "bank_transfer", "transferencia"}
 
-# Company name fragments to exclude (case-insensitive)
-EXCLUDED_COMPANY_FRAGMENTS = ["fedfarma", "federaci farmac"]
+# Known Fedfarma customer IDs to exclude (add more as needed)
+# Since there is no company name in the DB, we maintain this exclusion list.
+EXCLUDED_CUSTOMER_IDS: set[int] = set()  # e.g. {1234, 5678}
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
@@ -36,57 +46,80 @@ CORS_HEADERS = {
 }
 
 
-async def _wc_get_all(client: httpx.AsyncClient, path: str, params: dict) -> list[dict]:
-    """Paginate through all pages of a WooCommerce endpoint."""
-    results: list[dict] = []
-    page = 1
-    while True:
-        p = {**params, "page": page, "per_page": 100}
-        resp = await client.get(f"{WC_BASE_URL}{path}", params=p, auth=WC_AUTH, timeout=60.0)
-        resp.raise_for_status()
-        data = resp.json()
-        if not data:
-            break
-        results.extend(data)
-        if len(data) < 100:
-            break
-        page += 1
-    return results
+def _get_db_connection():
+    """Open and return a new psycopg2 connection to Railway PostgreSQL."""
+    return psycopg2.connect(**DB_CONFIG)
 
 
-def _company_excluded(billing: dict) -> bool:
-    """Return True if the billing company/name matches an exclusion fragment."""
-    company = (billing.get("company") or "").lower()
-    first = (billing.get("first_name") or "").lower()
-    last = (billing.get("last_name") or "").lower()
-    full_name = f"{company} {first} {last}"
-    for fragment in EXCLUDED_COMPANY_FRAGMENTS:
-        if fragment in full_name:
-            return True
-    return False
+def _query_b2b_orders(after_str: str, before_str: str) -> list[dict]:
+    """
+    Query woo_orders for B2B orders in the given date range.
+    Returns one row per line item; we aggregate by order_id afterwards.
+
+    Filters applied at SQL level:
+      - channel = 'B2B'
+      - date >= after (inclusive, start of day UTC)
+      - date <= before (inclusive, end of day UTC)
+    """
+    sql = """
+        SELECT
+            order_id,
+            date,
+            payment_method,
+            customer_id,
+            order_total_eur,
+            ARRAY_AGG(sku ORDER BY line_item_id) AS skus
+        FROM woo_orders
+        WHERE channel = 'B2B'
+          AND date >= %(after)s::timestamptz
+          AND date <= %(before)s::timestamptz
+        GROUP BY order_id, date, payment_method, customer_id, order_total_eur
+        ORDER BY date DESC
+    """
+    params = {
+        "after": f"{after_str}T00:00:00+00:00",
+        "before": f"{before_str}T23:59:59+00:00",
+    }
+    conn = _get_db_connection()
+    try:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
-def _format_order(order: dict) -> dict:
-    """Convert a raw WooCommerce order into the B2B response shape."""
-    billing = order.get("billing", {})
-    company = billing.get("company") or f"{billing.get('first_name', '')} {billing.get('last_name', '')}".strip()
-    skus = [
-        item.get("sku") or item.get("product_id")
-        for item in order.get("line_items", [])
-    ]
+def _format_order(row: dict) -> dict:
+    """Convert a raw DB row into the B2B response shape."""
+    # No company name in DB — use customer_id as placeholder
+    company = f"customer_{row['customer_id']}"
     return {
-        "order_id": order["id"],
-        "date": order.get("date_created", "")[:10],
+        "order_id": row["order_id"],
+        "date": row["date"].strftime("%Y-%m-%d") if row["date"] else "",
         "company": company,
-        "skus": skus,
-        "amount": order.get("total", "0"),
-        "pm": order.get("payment_method", ""),
-        "customer_id": order.get("customer_id"),
+        "skus": [s for s in (row["skus"] or []) if s],
+        "amount": float(row["order_total_eur"]) if row["order_total_eur"] is not None else 0.0,
+        "pm": row["payment_method"] or "",
+        "customer_id": row["customer_id"],
     }
 
 
 async def route_b2b_orders(request: Request) -> Response:
-    """GET /api/b2b-orders?after=YYYY-MM-DD&before=YYYY-MM-DD"""
+    """GET /api/b2b-orders?after=YYYY-MM-DD&before=YYYY-MM-DD
+
+    Queries Railway PostgreSQL directly. The woo_orders table does NOT contain
+    a 'company' or 'billing_company' column; the 'company' field in the response
+    is set to 'customer_<id>' as a placeholder — enrich downstream via WooCommerce
+    API or a separate customer lookup if needed.
+
+    B2B filter: channel = 'B2B' (stored in woo_orders at sync time).
+    No 'professionals' role table exists in this DB.
+
+    Exclusions applied:
+      - payment_method IN ('bacs', 'bank_transfer', 'transferencia') → excluded[]
+      - customer_id IN EXCLUDED_CUSTOMER_IDS (Fedfarma IDs) → excluded[]
+    """
 
     # Handle preflight OPTIONS
     if request.method == "OPTIONS":
@@ -102,7 +135,6 @@ async def route_b2b_orders(request: Request) -> Response:
             headers=CORS_HEADERS,
         )
 
-    # Validate date format
     try:
         datetime.strptime(after_str, "%Y-%m-%d")
         datetime.strptime(before_str, "%Y-%m-%d")
@@ -113,45 +145,32 @@ async def route_b2b_orders(request: Request) -> Response:
             headers=CORS_HEADERS,
         )
 
-    # WooCommerce 'after'/'before' expect ISO8601 with time component
-    after_iso = f"{after_str}T00:00:00"
-    before_iso = f"{before_str}T23:59:59"
-
-    async with httpx.AsyncClient() as client:
-        # Fetch all professionals customers (paginated)
-        customers = await _wc_get_all(client, "/customers", {"role": "professionals"})
-        professional_ids = {c["id"] for c in customers}
-
-        # Fetch all orders in date range (paginated)
-        orders_raw = await _wc_get_all(
-            client,
-            "/orders",
-            {
-                "after": after_iso,
-                "before": before_iso,
-                "status": "any",
-            },
+    try:
+        rows = _query_b2b_orders(after_str, before_str)
+    except Exception as exc:
+        return JSONResponse(
+            {"error": f"Database query failed: {exc}"},
+            status_code=500,
+            headers=CORS_HEADERS,
         )
 
     included = []
     excluded = []
 
-    for order in orders_raw:
-        customer_id = order.get("customer_id")
-        billing = order.get("billing", {})
-        payment_method = order.get("payment_method", "").lower()
-        formatted = _format_order(order)
+    for row in rows:
+        formatted = _format_order(row)
+        pm = (row.get("payment_method") or "").lower()
+        cid = row.get("customer_id")
 
-        # Filter: must be a professional customer
-        if customer_id not in professional_ids:
-            continue
-
-        # Exclusion checks
-        if payment_method in EXCLUDED_PAYMENT_METHODS:
+        # Exclude by payment method (bacs / bank transfer)
+        if pm in EXCLUDED_PAYMENT_METHODS:
+            formatted["exclusion_reason"] = f"payment_method={pm}"
             excluded.append(formatted)
             continue
 
-        if _company_excluded(billing):
+        # Exclude by known Fedfarma customer IDs
+        if cid in EXCLUDED_CUSTOMER_IDS:
+            formatted["exclusion_reason"] = f"fedfarma customer_id={cid}"
             excluded.append(formatted)
             continue
 
@@ -161,5 +180,11 @@ async def route_b2b_orders(request: Request) -> Response:
         "orders": included,
         "excluded": excluded,
         "generated": date.today().isoformat(),
+        "meta": {
+            "source": "railway_postgresql",
+            "table": "woo_orders",
+            "filter": "channel='B2B'",
+            "note": "No company name in DB; company field = customer_<id>. No professionals role table exists.",
+        },
     }
     return JSONResponse(payload, headers=CORS_HEADERS)
