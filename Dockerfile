@@ -21,11 +21,7 @@ ARG HERMES_REF=v2026.5.7
 #
 # Node.js is required only at build time to compile the Hermes React dashboard.
 # We strip the source + apt lists afterwards to keep the image lean.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates git tini unzip && \
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    rm -rf /var/lib/apt/lists/*
+RUN apt-get update &&     apt-get install -y --no-install-recommends curl ca-certificates git tini unzip &&     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - &&     apt-get install -y --no-install-recommends nodejs &&     rm -rf /var/lib/apt/lists/*
 
 # Install hermes-agent (provides the `hermes` CLI) and pre-build its React
 # dashboard so `hermes dashboard` has nothing to build at runtime.
@@ -37,16 +33,7 @@ RUN apt-get update && \
 # PyPI is currently quarantined (zero installable versions), which makes the full
 # `[all]` extra unresolvable. Drop `[mistral]` from our expansion until either
 # PyPI restores the package or upstream removes the pin.
-RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent && \
-    cd /opt/hermes-agent && \
-    uv pip install --system --no-cache -e ".[modal,daytona,vercel,messaging,matrix,cron,cli,dev,tts-premium,slack,pty,honcho,mcp,homeassistant,sms,acp,voice,dingtalk,feishu,google,bedrock,web]" && \
-    cd /opt/hermes-agent/web && \
-    npm install --silent && \
-    npm run build && \
-    cd /opt/hermes-agent/ui-tui && \
-    npm install --silent --no-fund --no-audit --progress=false && \
-    npm run build && \
-    rm -rf /opt/hermes-agent/web /opt/hermes-agent/.git /root/.npm
+RUN git clone --depth 1 --branch ${HERMES_REF} https://github.com/NousResearch/hermes-agent.git /opt/hermes-agent &&     cd /opt/hermes-agent &&     uv pip install --system --no-cache -e ".[modal,daytona,vercel,messaging,matrix,cron,cli,dev,tts-premium,slack,pty,honcho,mcp,homeassistant,sms,acp,voice,dingtalk,feishu,google,bedrock,web]" &&     cd /opt/hermes-agent/web &&     npm install --silent &&     npm run build &&     cd /opt/hermes-agent/ui-tui &&     npm install --silent --no-fund --no-audit --progress=false &&     npm run build &&     rm -rf /opt/hermes-agent/web /opt/hermes-agent/.git /root/.npm
 
 # Why pre-build ui-tui (and why we don't delete it after):
 # - The dashboard's embedded Chat tab spawns `node ui-tui/dist/entry.js`
@@ -68,11 +55,7 @@ RUN uv pip install --system --no-cache -r /app/requirements.txt
 # Bun is required. git clone + bun link is the ONLY supported install path.
 # Do NOT use `npm install -g gbrain` (wrong package on npm, gbrain#658)
 # or `bun install -g github:garrytan/gbrain` (broken postinstall, gbrain#218).
-RUN curl -fsSL https://bun.sh/install | bash && \
-    git clone --depth 1 https://github.com/garrytan/gbrain.git /opt/gbrain && \
-    cd /opt/gbrain && \
-    /root/.bun/bin/bun install && \
-    /root/.bun/bin/bun link
+RUN curl -fsSL https://bun.sh/install | bash &&     git clone --depth 1 https://github.com/garrytan/gbrain.git /opt/gbrain &&     cd /opt/gbrain &&     /root/.bun/bin/bun install &&     /root/.bun/bin/bun link
 
 ENV PATH="/root/.bun/bin:$PATH"
 ENV GBRAIN_HOME=/data/.gbrain
@@ -80,6 +63,7 @@ ENV GBRAIN_HOME=/data/.gbrain
 RUN mkdir -p /data/.hermes
 
 COPY server.py /app/server.py
+COPY woocommerce_routes.py /app/woocommerce_routes.py
 COPY amazon_scheduler.py /app/amazon_scheduler.py
 COPY scripts/ /app/scripts/
 COPY templates/ /app/templates/
