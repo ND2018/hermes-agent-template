@@ -28,11 +28,17 @@ _DB_PARAMS = {
 _EXCLUDED_PM = {"bacs", "bank_transfer", "transferencia", "wire_transfer"}
 _EXCLUDED_CUSTOMER = 3475  # Fedfarma
 
-_CORS_HEADERS = {
-    "Access-Control-Allow-Origin":  "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization, Content-Type",
-}
+
+def _cors_headers(request):
+    origin = request.headers.get("origin") or request.headers.get("Origin") or "*"
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Access-Control-Allow-Credentials": "false",
+        "Vary": "Origin",
+    }
+
 
 _SQL = """
 SELECT
@@ -57,7 +63,7 @@ async def route_b2b_orders(request: Request) -> Response:
 
     # ── Handle OPTIONS preflight ──────────────────────────────────────────────
     if request.method == "OPTIONS":
-        return Response(status_code=204, headers=dict(_CORS_HEADERS))
+        return Response(status_code=204, headers=_cors_headers(request))
 
     # ── Parse query params ────────────────────────────────────────────────────
     today = date.today()
@@ -74,7 +80,7 @@ async def route_b2b_orders(request: Request) -> Response:
         return JSONResponse(
             {"error": f"Invalid date format: {exc}"},
             status_code=400,
-            headers=dict(_CORS_HEADERS),
+            headers=_cors_headers(request),
         )
 
     # ── Query DB ──────────────────────────────────────────────────────────────
@@ -90,7 +96,7 @@ async def route_b2b_orders(request: Request) -> Response:
         return JSONResponse(
             {"error": f"DB error: {exc}"},
             status_code=500,
-            headers=dict(_CORS_HEADERS),
+            headers=_cors_headers(request),
         )
 
     # ── Split into orders / excluded ──────────────────────────────────────────
@@ -125,5 +131,5 @@ async def route_b2b_orders(request: Request) -> Response:
 
     return JSONResponse(
         payload,
-        headers=dict(_CORS_HEADERS),
+        headers=_cors_headers(request),
     )
