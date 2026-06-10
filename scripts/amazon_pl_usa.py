@@ -61,7 +61,24 @@ MCP_KEY       = os.environ.get("MCP_KEY") or os.environ.get("MCP_API_KEY") or _r
 
 # ── GBrain Naturdao v0.41.2.0 ─────────────────────────────────────────────────
 GBRAIN2_URL   = "https://gbrain-naturdao-production.up.railway.app"
-GBRAIN2_TOKEN = os.environ.get("GBRAIN2_TOKEN")
+def _get_gbrain_token():
+    """Token GBrain fresc via OAuth client_credentials (fix healer 2026-06-10: el token estatic dona 401)."""
+    _gu = os.environ.get("GBRAIN2_URL", "https://gbrain-naturdao-production.up.railway.app")
+    _ci = os.environ.get("GBRAIN2_CLIENT_ID", "")
+    _cs = os.environ.get("GBRAIN2_CLIENT_SECRET", "")
+    if _ci and _cs:
+        try:
+            _b = urllib.parse.urlencode({"grant_type": "client_credentials", "client_id": _ci, "client_secret": _cs}).encode()
+            _rq = urllib.request.Request(f"{_gu}/token", data=_b, headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
+            with urllib.request.urlopen(_rq, timeout=15) as _r:
+                _t = json.loads(_r.read()).get("access_token", "")
+            if _t:
+                return _t
+        except Exception:
+            pass
+    return os.environ.get("GBRAIN2_TOKEN", "")
+
+GBRAIN2_TOKEN = _get_gbrain_token()
 if not GBRAIN2_TOKEN:
     raise SystemExit("FATAL: GBRAIN2_TOKEN env var not set — refusing to run without explicit credential. Set GBRAIN2_TOKEN in Railway env vars.")
 
