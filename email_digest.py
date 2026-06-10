@@ -16,6 +16,17 @@ Variables d'entorn necessàries:
 """
 
 import imaplib
+
+def _cest_ts(fmt="%Y-%m-%d %H:%M"):
+    """Hora local CEST/CET (Europe/Madrid) sense dependre de tzdata. Fix healer 2026-06-10."""
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    _u = _dt.now(_tz.utc)
+    _y = _u.year
+    _mar = _dt(_y, 3, 31, 1, tzinfo=_tz.utc); _mar -= _td(days=(_mar.weekday() + 1) % 7)
+    _oc = _dt(_y, 10, 31, 1, tzinfo=_tz.utc); _oc -= _td(days=(_oc.weekday() + 1) % 7)
+    _dst = _mar <= _u < _oc
+    return (_u + _td(hours=2 if _dst else 1)).strftime(fmt) + (" CEST" if _dst else " CET")
+
 import email
 import os
 import json
@@ -182,7 +193,7 @@ def send_telegram(text):
 
 # ─── MAIN ────────────────────────────────────────────────────────────────────
 def main():
-    now_str = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+    now_str = _cest_ts("%d/%m/%Y %H:%M")
     print(f"\n{'='*50}")
     print(f"📧 Email Digest Naturdao — {now_str}")
     print(f"{'='*50}\n")
