@@ -34,6 +34,17 @@ USO:
 """
 
 import os, sys, json, csv, io, gzip, time, argparse
+
+def _cest_ts(fmt="%Y-%m-%d %H:%M"):
+    """Hora local CEST/CET (Europe/Madrid) sense dependre de tzdata. Fix healer 2026-06-10."""
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    _u = _dt.now(_tz.utc)
+    _y = _u.year
+    _mar = _dt(_y, 3, 31, 1, tzinfo=_tz.utc); _mar -= _td(days=(_mar.weekday() + 1) % 7)
+    _oc = _dt(_y, 10, 31, 1, tzinfo=_tz.utc); _oc -= _td(days=(_oc.weekday() + 1) % 7)
+    _dst = _mar <= _u < _oc
+    return (_u + _td(hours=2 if _dst else 1)).strftime(fmt) + (" CEST" if _dst else " CET")
+
 import urllib.request, urllib.error, urllib.parse
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
@@ -809,7 +820,7 @@ def main():
     token = get_token()
     rows  = get_orders_report(token, start, end)
     data  = calc_pl(rows, label)
-    ts    = now.strftime("%Y-%m-%d %H:%M UTC")
+    ts    = _cest_ts()
     page  = build_page(data, ts)
 
     log("-" * 60)
