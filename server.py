@@ -227,17 +227,34 @@ def write_config_yaml(data: dict[str, str]) -> None:
 
     merged["data_dir"] = HERMES_HOME
 
-    # Auto-configure GBrain2 MCP server when env vars are present
+    # Auto-configure GBrain2 MCP server when env vars are present.
+    # NOTE: GBrain2 /mcp rejects the static GBRAIN2_TOKEN with 401 (healer 2026-06-10;
+    # cf. scripts/amazon_pl_diario._get_gbrain_token). This gateway is a long-running MCP
+    # client configured with a STATIC header, so we mint a fresh OAuth client_credentials
+    # access token on every boot and write THAT into config.yaml. Static token = fallback.
     _g2_url = os.environ.get("GBRAIN2_URL", "")
     _g2_tok = os.environ.get("GBRAIN2_TOKEN", "")
+    _g2_ci  = os.environ.get("GBRAIN2_CLIENT_ID", "")
+    _g2_cs  = os.environ.get("GBRAIN2_CLIENT_SECRET", "")
+    if _g2_url and _g2_ci and _g2_cs:
+        try:
+            import urllib.request as _u, urllib.parse as _up, json as _j
+            _body = _up.urlencode({"grant_type": "client_credentials",
+                                   "client_id": _g2_ci, "client_secret": _g2_cs}).encode()
+            _rq = _u.Request(_g2_url.rstrip("/") + "/token", data=_body,
+                             headers={"Content-Type": "application/x-www-form-urlencoded"}, method="POST")
+            with _u.urlopen(_rq, timeout=15) as _rsp:
+                _at = _j.loads(_rsp.read()).get("access_token", "")
+            if _at:
+                _g2_tok = _at
+        except Exception:
+            pass  # keep static token as fallback
     if _g2_url and _g2_tok:
         _mcp_url = _g2_url if _g2_url.endswith("/mcp") else _g2_url.rstrip("/") + "/mcp"
         _mcp = merged.setdefault("mcp_servers", {})
         if isinstance(_mcp, dict):
-            # Deployment-managed: refresh URL + token from env on EVERY boot. The
-            # volume copy of config.yaml is written once on first boot, so a rotated
-            # GBRAIN2_TOKEN never reached it under the old "gbrain2 not in _mcp" guard
-            # (stale token -> GBrain2 /mcp 401 -> no tools loaded). Preserve other subkeys.
+            # Refresh URL + token on EVERY boot (config.yaml lives on the persistent
+            # /data volume, so a one-time write goes stale). Preserve other subkeys.
             _g2 = _mcp.get("gbrain2") if isinstance(_mcp.get("gbrain2"), dict) else {}
             _g2["url"] = _mcp_url
             _g2["headers"] = {"Authorization": "Bearer " + _g2_tok}
