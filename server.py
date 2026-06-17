@@ -233,8 +233,15 @@ def write_config_yaml(data: dict[str, str]) -> None:
     if _g2_url and _g2_tok:
         _mcp_url = _g2_url if _g2_url.endswith("/mcp") else _g2_url.rstrip("/") + "/mcp"
         _mcp = merged.setdefault("mcp_servers", {})
-        if isinstance(_mcp, dict) and "gbrain2" not in _mcp:
-            _mcp["gbrain2"] = {"url": _mcp_url, "headers": {"Authorization": "Bearer " + _g2_tok}}
+        if isinstance(_mcp, dict):
+            # Deployment-managed: refresh URL + token from env on EVERY boot. The
+            # volume copy of config.yaml is written once on first boot, so a rotated
+            # GBRAIN2_TOKEN never reached it under the old "gbrain2 not in _mcp" guard
+            # (stale token -> GBrain2 /mcp 401 -> no tools loaded). Preserve other subkeys.
+            _g2 = _mcp.get("gbrain2") if isinstance(_mcp.get("gbrain2"), dict) else {}
+            _g2["url"] = _mcp_url
+            _g2["headers"] = {"Authorization": "Bearer " + _g2_tok}
+            _mcp["gbrain2"] = _g2
 
     with config_path.open("w") as f:
         yaml.safe_dump(merged, f, sort_keys=False, default_flow_style=False)
